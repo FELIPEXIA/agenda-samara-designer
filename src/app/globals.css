@@ -1,0 +1,120 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,400&display=swap');
+
+:root {
+  --font-primary: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-serif: 'Playfair Display', Georgia, serif;
+
+  /* Paleta Elegante Samara Designer */
+  --bg-main: #fcf9f6;
+  --bg-card: #ffffff;
+  --bg-card-subtle: #f9f5f0;
+  
+  --primary: #c25975;
+  --primary-hover: #ab4761;
+  --primary-soft: #fcf0f3;
+  --primary-border: #f2d1da;
+
+  --accent-gold: #c89552;
+  --accent-gold-soft: #fbf5ed;
+
+  --text-main: #2b2326;
+  --text-muted: #786b70;
+  --text-light: #9c8e94;
+  --border-color: #eee7e1;
+
+  /* Status Colors */
+  --status-confirmado: #059669;
+  --status-confirmado-bg: #ecfdf5;
+  --status-confirmado-border: #a7f3d0;
+
+  --status-pendente: #d97706;
+  --status-pendente-bg: #fffbeb;
+  --status-pendente-border: #fde68a;
+
+  --status-cancelado: #dc2626;
+  --status-cancelado-bg: #fef2f2;
+  --status-cancelado-border: #fecaca;
+
+  /* Sombras aveludadas */
+  --shadow-sm: 0 1px 2px 0 rgba(43, 35, 38, 0.05);
+  --shadow-md: 0 4px 16px -2px rgba(100, 60, 70, 0.08), 0 2px 6px -1px rgba(0, 0, 0, 0.02);
+  --shadow-lg: 0 12px 32px -4px rgba(100, 60, 70, 0.12), 0 4px 12px -2px rgba(0, 0, 0, 0.03);
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-primary);
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  transition: all 0.2s ease;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+input:focus, select:focus, textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+/* Scrollbar personalizada */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-main);
+}
+::-webkit-scrollbar-thumb {
+  background: #d6cbd0;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #b5a4ab;
+}
+
+/* Utilitários Visuais */
+.glass-effect {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

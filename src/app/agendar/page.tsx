@@ -237,7 +237,11 @@ export default function AgendarPublicoPage() {
       style={{
         minHeight: '100vh',
         backgroundColor: 'var(--bg-main)',
-        padding: '24px 16px 80px 16px',
+        padding:
+          etapa === 1 && servicosSelecionadosIds.length > 0
+            ? '24px 16px 120px 16px'
+            : '24px 16px 80px 16px',
+        transition: 'padding-bottom 0.2s ease',
       }}
     >
       <div
@@ -499,8 +503,6 @@ export default function AgendarPublicoPage() {
                 display: 'grid',
                 gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
                 gap: '10px',
-                maxHeight: '380px',
-                overflowY: 'auto',
                 padding: '2px',
               }}
             >
@@ -589,7 +591,10 @@ export default function AgendarPublicoPage() {
               <button
                 type="button"
                 disabled={servicosSelecionadosIds.length === 0}
-                onClick={() => setEtapa(2)}
+                onClick={() => {
+                  setEtapa(2);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -1204,6 +1209,101 @@ export default function AgendarPublicoPage() {
           </div>
         )}
       </div>
+
+      {/* Barra Flutuante / Rodapé Fixo de Avanço (Etapa 1) */}
+      {etapa === 1 && servicosSelecionadosIds.length > 0 && (
+        <div
+          className="animate-slide-up"
+          style={{
+            position: 'fixed',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            zIndex: 100,
+            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+            backdropFilter: 'blur(16px)',
+            WebkitBackdropFilter: 'blur(16px)',
+            borderTop: '1px solid var(--border-color)',
+            boxShadow: '0 -6px 24px rgba(43, 35, 38, 0.12)',
+            padding: '12px 16px',
+            paddingBottom: 'max(14px, env(safe-area-inset-bottom, 14px))',
+          }}
+        >
+          <div
+            style={{
+              maxWidth: '720px',
+              margin: '0 auto',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                <span
+                  style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    color: 'var(--primary)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.03em',
+                  }}
+                >
+                  {servicosSelecionadosIds.length === 1
+                    ? '1 procedimento'
+                    : `${servicosSelecionadosIds.length} procedimentos`}
+                </span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>•</span>
+                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                  {duracaoTotal} min ({formatarDuracaoHoras(duracaoTotal)})
+                </span>
+              </div>
+              <div
+                style={{
+                  fontSize: '1.35rem',
+                  fontWeight: 800,
+                  color: 'var(--primary)',
+                  lineHeight: 1.2,
+                  marginTop: '2px',
+                }}
+              >
+                {formatarMoeda(valorTotal)}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              id="btn-avancar-etapa-flutuante"
+              onClick={() => {
+                setEtapa(2);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                backgroundColor: 'var(--primary)',
+                color: '#ffffff',
+                padding: '13px 22px',
+                borderRadius: 'var(--radius-md)',
+                fontWeight: 700,
+                fontSize: '0.9375rem',
+                boxShadow: '0 4px 14px rgba(194, 89, 117, 0.35)',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+            >
+              <span className="btn-floating-text-full">Avançar para Data & Horário</span>
+              <span className="btn-floating-text-short">Avançar</span>
+              <ArrowRight size={18} />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

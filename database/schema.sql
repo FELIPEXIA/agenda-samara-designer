@@ -42,7 +42,7 @@ CREATE INDEX IF NOT EXISTS idx_clientes_nome ON clientes(nome);
 -- 3. TABELA: SERVICOS
 -- ========================================================
 CREATE TABLE IF NOT EXISTS servicos (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id VARCHAR(50) PRIMARY KEY DEFAULT gen_random_uuid()::text,
     nome_servico VARCHAR(100) NOT NULL,
     categoria VARCHAR(50) DEFAULT 'Geral', -- 'Unhas', 'Sobrancelhas', etc.
     valor_base NUMERIC(10, 2) NOT NULL CHECK (valor_base >= 0),
@@ -123,7 +123,7 @@ FOR EACH ROW EXECUTE FUNCTION check_agendamento_overlap();
 CREATE TABLE IF NOT EXISTS agendamento_servicos (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     id_agendamento UUID NOT NULL REFERENCES agendamentos(id) ON DELETE CASCADE,
-    id_servico UUID NOT NULL REFERENCES servicos(id) ON DELETE RESTRICT,
+    id_servico VARCHAR(50) NOT NULL REFERENCES servicos(id) ON DELETE RESTRICT,
     valor_cobrado NUMERIC(10, 2) NOT NULL,
     duracao_minutos INTEGER NOT NULL
 );
@@ -138,9 +138,9 @@ CREATE INDEX IF NOT EXISTS idx_agendamento_servicos_agendamento ON agendamento_s
 CREATE OR REPLACE VIEW vw_agendamentos_dashboard AS
 SELECT 
     a.id,
-    a.data,
-    a.horario_inicio,
-    a.horario_fim,
+    to_char(a.data, 'YYYY-MM-DD') AS data,
+    to_char(a.horario_inicio, 'HH24:MI') AS horario_inicio,
+    to_char(a.horario_fim, 'HH24:MI') AS horario_fim,
     a.duracao_total_minutos,
     a.valor_total,
     a.forma_pagamento,
@@ -158,5 +158,6 @@ FROM agendamentos a
 JOIN clientes c ON a.id_cliente = c.id
 LEFT JOIN agendamento_servicos asv ON a.id = asv.id_agendamento
 LEFT JOIN servicos s ON asv.id_servico = s.id
-GROUP BY a.id, c.id;
+GROUP BY a.id, a.data, a.horario_inicio, a.horario_fim, a.duracao_total_minutos, a.valor_total, a.forma_pagamento, a.status, a.observacoes, a.created_at, c.id, c.nome, c.telefone;
+
 

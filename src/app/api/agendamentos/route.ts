@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listarAgendamentosPorData, listarAgendamentosPendentes, criarAgendamento } from '@/lib/db';
 import { CriarAgendamentoDTO } from '@/types';
+import { obterDataHojeLocal } from '@/lib/formatters';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const data = searchParams.get('data') || new Date().toISOString().split('T')[0];
+    const data = searchParams.get('data') || obterDataHojeLocal();
 
     const agendamentos = await listarAgendamentosPorData(data);
     return NextResponse.json(

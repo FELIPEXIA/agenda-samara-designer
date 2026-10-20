@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
-import { formatarDataExtenso } from '@/lib/formatters';
+import { formatarDataExtenso, obterDataHojeLocal } from '@/lib/formatters';
 
 interface DateNavigatorProps {
   dataSelecionada: string; // YYYY-MM-DD
@@ -13,7 +13,7 @@ export const DateNavigator: React.FC<DateNavigatorProps> = ({
   dataSelecionada,
   onMudarData,
 }) => {
-  const hojeStr = new Date().toISOString().split('T')[0];
+  const hojeStr = obterDataHojeLocal();
   const isHoje = dataSelecionada === hojeStr;
 
   const alterarDia = (dias: number) => {

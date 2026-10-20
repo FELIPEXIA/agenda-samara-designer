@@ -80,3 +80,16 @@ export function formatarDuracaoHoras(minutos: number): string {
   }
   return `${horas}h${minRestantes.toString().padStart(2, '0')}`;
 }
+
+/**
+ * Retorna a data de hoje no fuso horário local do usuário no formato YYYY-MM-DD
+ * Evita bugs de fuso horário UTC (ex: após as 21h no Brasil o UTC já é o dia seguinte)
+ */
+export function obterDataHojeLocal(): string {
+  const agora = new Date();
+  const ano = agora.getFullYear();
+  const mes = String(agora.getMonth() + 1).padStart(2, '0');
+  const dia = String(agora.getDate()).padStart(2, '0');
+  return `${ano}-${mes}-${dia}`;
+}
+

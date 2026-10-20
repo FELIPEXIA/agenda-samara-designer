@@ -4,43 +4,47 @@
 -- ========================================================
 
 -- Inserir Tabela Oficial de Serviços da Samara Designer
-INSERT INTO servicos (nome_servico, categoria, valor_base, duracao_minutos) VALUES
+INSERT INTO servicos (id, nome_servico, categoria, valor_base, duracao_minutos) VALUES
 -- Procedimentos Individuais de Unhas e Sobrancelhas
-('Pé e Mão', 'Unhas Tradicionais', 45.00, 120),
-('Pé', 'Unhas Tradicionais', 35.00, 60),
-('Mão', 'Unhas Tradicionais', 30.00, 60),
-('Henna', 'Sobrancelhas', 35.00, 60),
-('Sobrancelhas', 'Sobrancelhas', 25.00, 40),
+('srv-1', 'Pé e Mão', 'Unhas Tradicionais', 45.00, 120),
+('srv-2', 'Pé', 'Unhas Tradicionais', 35.00, 60),
+('srv-3', 'Mão', 'Unhas Tradicionais', 30.00, 60),
+('srv-4', 'Henna', 'Sobrancelhas', 35.00, 60),
+('srv-5', 'Sobrancelhas', 'Sobrancelhas', 25.00, 40),
 
 -- Combos Tradicionais + Sobrancelhas / Henna
-('Pé e Mão Henna', 'Combos Tradicionais', 80.00, 180),
-('Pé e Mão Sobrancelhas', 'Combos Tradicionais', 70.00, 180),
-('Pé Henna', 'Combos Tradicionais', 70.00, 120),
-('Pé Sobrancelhas', 'Combos Tradicionais', 60.00, 90),
-('Mão e Henna', 'Combos Tradicionais', 65.00, 100),
-('Mão Sobrancelhas', 'Combos Tradicionais', 55.00, 90),
+('srv-6', 'Pé e Mão Henna', 'Combos Tradicionais', 80.00, 180),
+('srv-7', 'Pé e Mão Sobrancelhas', 'Combos Tradicionais', 70.00, 180),
+('srv-8', 'Pé Henna', 'Combos Tradicionais', 70.00, 120),
+('srv-9', 'Pé Sobrancelhas', 'Combos Tradicionais', 60.00, 90),
+('srv-10', 'Mão e Henna', 'Combos Tradicionais', 65.00, 100),
+('srv-11', 'Mão Sobrancelhas', 'Combos Tradicionais', 55.00, 90),
 
 -- Procedimentos em Gel
-('Unha de Gel', 'Unhas em Gel', 120.00, 210),
-('Banho de Gel', 'Unhas em Gel', 90.00, 150),
-('Esmaltação em Gel', 'Unhas em Gel', 60.00, 120),
-('Manutenção', 'Unhas em Gel', 90.00, 180),
+('srv-12', 'Unha de Gel', 'Unhas em Gel', 120.00, 210),
+('srv-13', 'Banho de Gel', 'Unhas em Gel', 90.00, 150),
+('srv-14', 'Esmaltação em Gel', 'Unhas em Gel', 60.00, 120),
+('srv-15', 'Manutenção', 'Unhas em Gel', 90.00, 180),
 
 -- Combos com Unha de Gel
-('Unha de Gel e Pé', 'Combos Gel', 155.00, 240),
-('Unha de Gel e Sobrancelhas', 'Combos Gel', 145.00, 240),
-('Unha de Gel e Henna', 'Combos Gel', 155.00, 240),
+('srv-16', 'Unha de Gel e Pé', 'Combos Gel', 155.00, 240),
+('srv-17', 'Unha de Gel e Sobrancelhas', 'Combos Gel', 145.00, 240),
+('srv-18', 'Unha de Gel e Henna', 'Combos Gel', 155.00, 240),
 
 -- Combos com Banho de Gel
-('Banho de Gel e Pé', 'Combos Gel', 125.00, 210),
-('Banho de Gel Henna', 'Combos Gel', 125.00, 210),
-('Banho de Gel Sobrancelhas', 'Combos Gel', 160.00, 210),
+('srv-19', 'Banho de Gel e Pé', 'Combos Gel', 125.00, 210),
+('srv-20', 'Banho de Gel Henna', 'Combos Gel', 125.00, 210),
+('srv-21', 'Banho de Gel Sobrancelhas', 'Combos Gel', 160.00, 210),
 
 -- Combos com Esmaltação em Gel
-('Esmaltação em Gel e Henna', 'Combos Gel', 95.00, 180),
-('Esmaltação em Gel Sobrancelhas', 'Combos Gel', 85.00, 180),
+('srv-22', 'Esmaltação em Gel e Henna', 'Combos Gel', 95.00, 180),
+('srv-23', 'Esmaltação em Gel Sobrancelhas', 'Combos Gel', 85.00, 180),
 
 -- Combos de Manutenção
-('Manutenção e Henna', 'Combos Gel', 125.00, 240)
-ON CONFLICT DO NOTHING;
+('srv-24', 'Manutenção e Henna', 'Combos Gel', 125.00, 240)
+ON CONFLICT (id) DO UPDATE SET 
+    nome_servico = EXCLUDED.nome_servico,
+    categoria = EXCLUDED.categoria,
+    valor_base = EXCLUDED.valor_base,
+    duracao_minutos = EXCLUDED.duracao_minutos;
 

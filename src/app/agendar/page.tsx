@@ -19,7 +19,7 @@ import {
   Share2,
 } from 'lucide-react';
 import { Servico, Agendamento, FormaPagamento } from '@/types';
-import { formatarMoeda, formatarDuracaoHoras, formatarDataExtenso, formatarDataCurta } from '@/lib/formatters';
+import { formatarMoeda, formatarDuracaoHoras, formatarDataExtenso, formatarDataCurta, obterDataHojeLocal } from '@/lib/formatters';
 import { calcularHorarioFim, haConflitoDeHorario } from '@/lib/time-calc';
 import { criarLinkNotificarSamara, TELEFONE_SAMARA_FORMATADO, criarLinkContatoSamara } from '@/lib/whatsapp';
 import { ClienteDestaque } from '@/components/ui/ClienteDestaque';
@@ -44,9 +44,7 @@ export default function AgendarPublicoPage() {
 
   // Seleções do cliente
   const [servicosSelecionadosIds, setServicosSelecionadosIds] = useState<string[]>([]);
-  const [dataSelecionada, setDataSelecionada] = useState<string>(() => {
-    return new Date().toISOString().split('T')[0];
-  });
+  const [dataSelecionada, setDataSelecionada] = useState<string>(() => obterDataHojeLocal());
   const [horarioInicio, setHorarioInicio] = useState<string>('09:00');
 
   // Dados pessoais
@@ -690,7 +688,7 @@ export default function AgendarPublicoPage() {
                   type="date"
                   value={dataSelecionada}
                   onChange={(e) => setDataSelecionada(e.target.value)}
-                  min={new Date().toISOString().split('T')[0]}
+                  min={obterDataHojeLocal()}
                   style={{
                     width: '100%',
                     padding: '12px 12px 12px 40px',

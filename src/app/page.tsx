@@ -6,10 +6,11 @@ import { HeaderResumo } from '@/components/dashboard/HeaderResumo';
 import { DateNavigator } from '@/components/dashboard/DateNavigator';
 import { TimelineDiaria } from '@/components/dashboard/TimelineDiaria';
 import { ModalNovoAgendamento } from '@/components/agendamento/ModalNovoAgendamento';
+import { obterDataHojeLocal } from '@/lib/formatters';
 
 export default function DashboardPage() {
   const [dataSelecionada, setDataSelecionada] = useState<string>(() => {
-    return new Date().toISOString().split('T')[0];
+    return obterDataHojeLocal();
   });
   const [agendamentos, setAgendamentos] = useState<Agendamento[]>([]);
   const [carregando, setCarregando] = useState(true);

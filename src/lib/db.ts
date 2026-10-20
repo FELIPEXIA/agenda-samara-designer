@@ -1,4 +1,6 @@
 import { Pool } from 'pg';
+import fs from 'fs';
+import path from 'path';
 import { Agendamento, Cliente, Servico, CriarAgendamentoDTO, StatusAgendamento } from '@/types';
 import { calcularHorarioFim, haConflitoDeHorario } from './time-calc';
 
@@ -11,10 +13,9 @@ const pool = new Pool({
 });
 
 // ==============================================================
-// BASE DE DADOS EM MEMÓRIA (MOCK DATA)
-// Garante pleno funcionamento imediato mesmo antes da configuração do .env
+// CATÁLOGO OFICIAL DE SERVIÇOS (SAMARA DESIGNER)
 // ==============================================================
-let mockServicos: Servico[] = [
+export const mockServicos: Servico[] = [
   // Procedimentos Individuais de Unhas e Sobrancelhas
   { id: 'srv-1', nome_servico: 'Pé e Mão', categoria: 'Unhas Tradicionais', valor_base: 45.0, duracao_minutos: 120, ativo: true },
   { id: 'srv-2', nome_servico: 'Pé', categoria: 'Unhas Tradicionais', valor_base: 35.0, duracao_minutos: 60, ativo: true },
@@ -54,56 +55,137 @@ let mockServicos: Servico[] = [
   { id: 'srv-24', nome_servico: 'Manutenção e Henna', categoria: 'Combos Gel', valor_base: 125.0, duracao_minutos: 240, ativo: true },
 ];
 
-// Armazenamento em memória para clientes e agendamentos reais (sem dados fictícios ou recriação automática).
-// Usamos globalThis para preservar agendamentos reais e deleções durante Hot Module Replacement (HMR) em desenvolvimento.
+// ==============================================================
+// PERSISTÊNCIA EM ARQUIVO LOCAL (database/data.json)
+// Garante que nenhum agendamento seja perdido mesmo sem banco remoto
+// ==============================================================
+const DATA_FILE = path.join(process.cwd(), 'database', 'data.json');
+
+function carregarDadosLocais(): { clientes: Cliente[]; agendamentos: Agendamento[] } {
+  try {
+    if (fs.existsSync(DATA_FILE)) {
+      const conteudo = fs.readFileSync(DATA_FILE, 'utf-8');
+      const parsed = JSON.parse(conteudo);
+      return {
+        clientes: Array.isArray(parsed.clientes) ? parsed.clientes : [],
+        agendamentos: Array.isArray(parsed.agendamentos) ? parsed.agendamentos : [],
+      };
+    }
+  } catch (err) {
+    console.error('Erro ao ler database/data.json:', err);
+  }
+  return { clientes: [], agendamentos: [] };
+}
+
+function salvarDadosLocais(clientes: Cliente[], agendamentos: Agendamento[]): void {
+  try {
+    const dir = path.dirname(DATA_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ clientes, agendamentos }, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Erro ao salvar database/data.json:', err);
+  }
+}
+
+// Armazenamento em memória sincronizado com disco
 const globalStore = globalThis as unknown as {
-  mockClientes?: Cliente[];
-  mockAgendamentos?: Agendamento[];
+  localClientes?: Cliente[];
+  localAgendamentos?: Agendamento[];
+  dadosCarregados?: boolean;
 };
 
-if (!globalStore.mockClientes) {
-  globalStore.mockClientes = [];
+if (!globalStore.dadosCarregados) {
+  const iniciais = carregarDadosLocais();
+  globalStore.localClientes = iniciais.clientes;
+  globalStore.localAgendamentos = iniciais.agendamentos;
+  globalStore.dadosCarregados = true;
 }
 
-if (!globalStore.mockAgendamentos) {
-  globalStore.mockAgendamentos = [];
-}
-
-const mockClientes: Cliente[] = globalStore.mockClientes;
-const mockAgendamentos: Agendamento[] = globalStore.mockAgendamentos;
+const mockClientes: Cliente[] = globalStore.localClientes || [];
+const mockAgendamentos: Agendamento[] = globalStore.localAgendamentos || [];
 
 // ==============================================================
-// FUNÇÕES DE ACESSO A DADOS (HÍBRIDO POSTGRESQL + MEMORY FALLBACK)
+// CONSULTA SQL ROBUSTA E COMPATÍVEL (SEM DEPENDÊNCIA DE VIEW OU GROUP BY)
 // ==============================================================
+const SQL_SELECT_AGENDAMENTOS = `
+  SELECT 
+    a.id, 
+    to_char(a.data, 'YYYY-MM-DD') AS data, 
+    to_char(a.horario_inicio, 'HH24:MI') AS horario_inicio, 
+    to_char(a.horario_fim, 'HH24:MI') AS horario_fim, 
+    a.duracao_total_minutos, 
+    a.valor_total, 
+    a.forma_pagamento, 
+    a.status, 
+    a.observacoes, 
+    a.created_at, 
+    c.id AS cliente_id, 
+    c.nome AS cliente_nome, 
+    c.telefone AS cliente_telefone, 
+    COALESCE(string_agg(s.nome_servico, ' + ' ORDER BY s.nome_servico), 'Nenhum serviço especificado') AS lista_servicos
+  FROM agendamentos a
+  JOIN clientes c ON a.id_cliente = c.id
+  LEFT JOIN agendamento_servicos asv ON a.id = asv.id_agendamento
+  LEFT JOIN servicos s ON asv.id_servico = s.id
+`;
 
+const SQL_GROUP_BY_AGENDAMENTOS = `
+  GROUP BY a.id, a.data, a.horario_inicio, a.horario_fim, a.duracao_total_minutos, a.valor_total, a.forma_pagamento, a.status, a.observacoes, a.created_at, c.id, c.nome, c.telefone
+`;
+
+// ==============================================================
+// SERVIÇOS
+// ==============================================================
 export async function listarServicos(): Promise<Servico[]> {
   if (process.env.DATABASE_URL) {
     try {
       const res = await pool.query('SELECT * FROM servicos WHERE ativo = true ORDER BY categoria, nome_servico');
-      return res.rows;
+      if (res.rows && res.rows.length > 0) {
+        return res.rows;
+      }
+
+      // Se tabela servicos estiver vazia no PostgreSQL, auto-popula com a tabela oficial de Samara Designer
+      for (const s of mockServicos) {
+        await pool.query(
+          `INSERT INTO servicos (id, nome_servico, categoria, valor_base, duracao_minutos, ativo)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (id) DO NOTHING`,
+          [s.id, s.nome_servico, s.categoria, s.valor_base, s.duracao_minutos, true]
+        );
+      }
+
+      const resPosSeed = await pool.query('SELECT * FROM servicos WHERE ativo = true ORDER BY categoria, nome_servico');
+      if (resPosSeed.rows && resPosSeed.rows.length > 0) {
+        return resPosSeed.rows;
+      }
     } catch (err) {
-      console.warn('Erro ao consultar PostgreSQL para serviços. Usando dados locais.', err);
+      console.warn('Erro ao consultar/popular PostgreSQL para serviços. Usando dados locais.', err);
     }
   }
   return mockServicos.filter((s) => s.ativo);
 }
 
+// ==============================================================
+// CLIENTES
+// ==============================================================
 export async function buscarClientes(termo?: string): Promise<Cliente[]> {
   if (process.env.DATABASE_URL) {
     try {
       if (termo && termo.trim()) {
         const query = `
-          SELECT * FROM clientes 
+          SELECT id, nome, telefone, observacoes FROM clientes 
           WHERE nome ILIKE $1 OR telefone ILIKE $1 
           ORDER BY nome LIMIT 15
         `;
         const res = await pool.query(query, [`%${termo}%`]);
-        return res.rows;
+        if (res.rows) return res.rows;
       }
-      const res = await pool.query('SELECT * FROM clientes ORDER BY nome LIMIT 20');
-      return res.rows;
+      const res = await pool.query('SELECT id, nome, telefone, observacoes FROM clientes ORDER BY nome LIMIT 20');
+      if (res.rows) return res.rows;
     } catch (err) {
-      console.warn('Erro ao consultar clientes no PostgreSQL. Usando dados locais.', err);
+      console.warn('Erro ao consultar clientes no PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
@@ -120,25 +202,36 @@ export async function obterOuCriarCliente(dados: {
   telefone: string;
   observacoes?: string;
 }): Promise<Cliente> {
+  const telefoneSanitizado = dados.telefone.trim();
+
   if (process.env.DATABASE_URL) {
     try {
-      if (dados.id) {
-        const res = await pool.query('SELECT * FROM clientes WHERE id = $1', [dados.id]);
+      // Procura por ID se for UUID válido
+      if (dados.id && dados.id.length >= 32) {
+        const res = await pool.query('SELECT id, nome, telefone, observacoes FROM clientes WHERE id = $1', [dados.id]);
         if (res.rows[0]) return res.rows[0];
       }
       // Procura por telefone antes de criar
-      const busca = await pool.query('SELECT * FROM clientes WHERE telefone = $1', [dados.telefone]);
+      const busca = await pool.query('SELECT id, nome, telefone, observacoes FROM clientes WHERE telefone = $1', [telefoneSanitizado]);
       if (busca.rows[0]) {
         return busca.rows[0];
       }
-      // Cria novo
+      // Cria novo no banco
       const ins = await pool.query(
-        'INSERT INTO clientes (nome, telefone, observacoes) VALUES ($1, $2, $3) RETURNING *',
-        [dados.nome, dados.telefone, dados.observacoes || null]
+        'INSERT INTO clientes (nome, telefone, observacoes) VALUES ($1, $2, $3) RETURNING id, nome, telefone, observacoes',
+        [dados.nome.trim(), telefoneSanitizado, dados.observacoes?.trim() || null]
       );
-      return ins.rows[0];
+      if (ins.rows[0]) {
+        // Também salva no espelho local
+        const achadoLocal = mockClientes.find((c) => c.telefone === telefoneSanitizado);
+        if (!achadoLocal) {
+          mockClientes.push(ins.rows[0]);
+          salvarDadosLocais(mockClientes, mockAgendamentos);
+        }
+        return ins.rows[0];
+      }
     } catch (err) {
-      console.warn('Erro ao obter/criar cliente no PostgreSQL. Usando mock.', err);
+      console.warn('Erro ao obter/criar cliente no PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
@@ -146,51 +239,57 @@ export async function obterOuCriarCliente(dados: {
     const achado = mockClientes.find((c) => c.id === dados.id);
     if (achado) return achado;
   }
-  const existentePorTelefone = mockClientes.find((c) => c.telefone === dados.telefone);
+  const existentePorTelefone = mockClientes.find((c) => c.telefone === telefoneSanitizado);
   if (existentePorTelefone) return existentePorTelefone;
 
   const novoCliente: Cliente = {
     id: `cli-${Date.now()}`,
-    nome: dados.nome,
-    telefone: dados.telefone,
-    observacoes: dados.observacoes,
+    nome: dados.nome.trim(),
+    telefone: telefoneSanitizado,
+    observacoes: dados.observacoes?.trim(),
   };
   mockClientes.push(novoCliente);
+  salvarDadosLocais(mockClientes, mockAgendamentos);
   return novoCliente;
 }
 
+// ==============================================================
+// AGENDAMENTOS: LISTAR POR DATA (TODOS OS STATUS: CONFIRMADO, PENDENTE, CANCELADO)
+// ==============================================================
 export async function listarAgendamentosPorData(data: string): Promise<Agendamento[]> {
   const dataAlvo = data.substring(0, 10);
+
   if (process.env.DATABASE_URL) {
     try {
-      const res = await pool.query(
-        `SELECT * FROM vw_agendamentos_dashboard 
-         WHERE to_char(data, 'YYYY-MM-DD') = $1 
-         ORDER BY horario_inicio ASC`,
-        [dataAlvo]
-      );
-      return res.rows;
+      const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE to_char(a.data, 'YYYY-MM-DD') = $1 ${SQL_GROUP_BY_AGENDAMENTOS} ORDER BY a.horario_inicio ASC`;
+      const res = await pool.query(sql, [dataAlvo]);
+      if (res && res.rows) {
+        return res.rows;
+      }
     } catch (err) {
-      console.warn('Erro ao listar agendamentos do PostgreSQL. Usando mock.', err);
+      console.warn('Erro ao listar agendamentos do PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
+  // Retorna todos os agendamentos persistidos na data selecionada
   return mockAgendamentos
     .filter((a) => (a.data ? a.data.substring(0, 10) === dataAlvo : false))
     .sort((a, b) => a.horario_inicio.localeCompare(b.horario_inicio));
 }
 
+// ==============================================================
+// AGENDAMENTOS: LISTAR PENDENTES (FILA GERAL FIFO)
+// ==============================================================
 export async function listarAgendamentosPendentes(): Promise<Agendamento[]> {
   if (process.env.DATABASE_URL) {
     try {
-      const res = await pool.query(
-        `SELECT * FROM vw_agendamentos_dashboard 
-         WHERE status = 'Pendente' 
-         ORDER BY created_at ASC, data ASC, horario_inicio ASC`
-      );
-      return res.rows;
+      const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.status = 'Pendente' ${SQL_GROUP_BY_AGENDAMENTOS} ORDER BY a.created_at ASC, a.data ASC, a.horario_inicio ASC`;
+      const res = await pool.query(sql);
+      if (res && res.rows) {
+        return res.rows;
+      }
     } catch (err) {
-      console.warn('Erro ao listar agendamentos pendentes do PostgreSQL. Usando mock.', err);
+      console.warn('Erro ao listar agendamentos pendentes do PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
@@ -201,12 +300,35 @@ export async function listarAgendamentosPendentes(): Promise<Agendamento[]> {
         const diff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
         if (diff !== 0) return diff;
       }
-      const cmpData = a.data.localeCompare(b.data);
+      const cmpData = (a.data || '').localeCompare(b.data || '');
       if (cmpData !== 0) return cmpData;
       return a.horario_inicio.localeCompare(b.horario_inicio);
     });
 }
 
+// ==============================================================
+// AGENDAMENTOS: CONSULTAR POR ID
+// ==============================================================
+export async function obterAgendamentoPorId(id: string): Promise<Agendamento | null> {
+  if (process.env.DATABASE_URL) {
+    try {
+      const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.id = $1 ${SQL_GROUP_BY_AGENDAMENTOS} LIMIT 1`;
+      const res = await pool.query(sql, [id]);
+      if (res.rows[0]) {
+        return res.rows[0];
+      }
+    } catch (err) {
+      console.warn('Erro ao consultar agendamento por ID no PostgreSQL. Usando armazenamento local.', err);
+    }
+  }
+
+  const achado = mockAgendamentos.find((a) => a.id === id);
+  return achado || null;
+}
+
+// ==============================================================
+// AGENDAMENTOS: CRIAR (COM PERSISTÊNCIA DUAL POSTGRESQL + DISCO)
+// ==============================================================
 export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agendamento> {
   const cliente = await obterOuCriarCliente(dto.cliente);
   const todosServicos = await listarServicos();
@@ -221,30 +343,30 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
 
   const horarioFim = calcularHorarioFim(dto.horario_inicio, duracaoTotal);
   const listaServicosTexto = servicosSelecionados.map((s) => s.nome_servico).join(' + ');
+  const dataFormatada = dto.data.substring(0, 10);
+  const horarioInicioFormatado = dto.horario_inicio.substring(0, 5);
 
   if (process.env.DATABASE_URL) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      // 1. Validação de conflito de horário no PostgreSQL (regra de intersecção)
+      // Validação de conflito de horário no PostgreSQL
       const checkConflict = await client.query(
-        `SELECT a.id, a.horario_inicio, a.horario_fim, c.nome AS cliente_nome
+        `SELECT a.id, to_char(a.horario_inicio, 'HH24:MI') as horario_inicio, to_char(a.horario_fim, 'HH24:MI') as horario_fim, c.nome AS cliente_nome
          FROM agendamentos a
          JOIN clientes c ON a.id_cliente = c.id
-         WHERE a.data = $1
+         WHERE to_char(a.data, 'YYYY-MM-DD') = $1
            AND a.status != 'Cancelado'
            AND (a.horario_inicio < $3::time AND a.horario_fim > $2::time)
          LIMIT 1`,
-        [dto.data, dto.horario_inicio, horarioFim]
+        [dataFormatada, horarioInicioFormatado, horarioFim]
       );
 
       if (checkConflict.rows[0]) {
         const c = checkConflict.rows[0];
-        const hInicio = c.horario_inicio.toString().substring(0, 5);
-        const hFim = c.horario_fim.toString().substring(0, 5);
         throw new Error(
-          `Conflito de horário! O intervalo pretendido (${dto.horario_inicio} às ${horarioFim}) colide com o atendimento de "${c.cliente_nome}" (${hInicio} às ${hFim}).`
+          `Conflito de horário! O intervalo pretendido (${horarioInicioFormatado} às ${horarioFim}) colide com o atendimento de "${c.cliente_nome}" (${c.horario_inicio} às ${c.horario_fim}).`
         );
       }
 
@@ -252,11 +374,11 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
         `INSERT INTO agendamentos 
          (id_cliente, data, horario_inicio, horario_fim, duracao_total_minutos, valor_total, forma_pagamento, status, observacoes)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING *`,
+         RETURNING id, to_char(data, 'YYYY-MM-DD') as data, to_char(horario_inicio, 'HH24:MI') as horario_inicio, to_char(horario_fim, 'HH24:MI') as horario_fim, duracao_total_minutos, valor_total, forma_pagamento, status, observacoes, created_at`,
         [
           cliente.id,
-          dto.data,
-          dto.horario_inicio,
+          dataFormatada,
+          horarioInicioFormatado,
           horarioFim,
           duracaoTotal,
           valorTotal,
@@ -278,36 +400,48 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
 
       await client.query('COMMIT');
 
-      return {
+      const retornoPg: Agendamento = {
         ...agendamentoCriado,
+        cliente_id: cliente.id,
         cliente_nome: cliente.nome,
         cliente_telefone: cliente.telefone,
         lista_servicos: listaServicosTexto,
       };
+
+      // Espelha no arquivo local para garantir persistência contínua
+      const idxLocal = mockAgendamentos.findIndex((a) => a.id === retornoPg.id);
+      if (idxLocal >= 0) {
+        mockAgendamentos[idxLocal] = retornoPg;
+      } else {
+        mockAgendamentos.push(retornoPg);
+      }
+      salvarDadosLocais(mockClientes, mockAgendamentos);
+
+      return retornoPg;
     } catch (err: any) {
       await client.query('ROLLBACK');
       if (err.message && err.message.includes('Conflito de horário')) {
         throw err;
       }
-      console.warn('Erro ao inserir agendamento no PostgreSQL. Usando mock.', err);
+      console.warn('Erro ao inserir agendamento no PostgreSQL. Usando armazenamento local.', err);
     } finally {
       client.release();
     }
   }
 
-  // Fallback em memória com validação estrita de sobreposição
+  // Fallback em armazenamento local com validação estrita de sobreposição
   const conflitoMemoria = mockAgendamentos.find(
     (a) =>
-      a.data === dto.data &&
+      a.data?.substring(0, 10) === dataFormatada &&
       a.status !== 'Cancelado' &&
-      haConflitoDeHorario(dto.horario_inicio, horarioFim, a.horario_inicio, a.horario_fim)
+      haConflitoDeHorario(horarioInicioFormatado, horarioFim, a.horario_inicio, a.horario_fim)
   );
 
   if (conflitoMemoria) {
     const hInicio = conflitoMemoria.horario_inicio.substring(0, 5);
     const hFim = conflitoMemoria.horario_fim.substring(0, 5);
     throw new Error(
-      `Conflito de horário! O intervalo pretendido (${dto.horario_inicio} às ${horarioFim}) colide com o atendimento de "${conflitoMemoria.cliente_nome}" (${hInicio} às ${hFim}).`
+      `Conflito de horário! O intervalo pretendido (${horarioInicioFormatado} às ${horarioFim}) colide com o atendimento de "${conflitoMemoria.cliente_nome}" (${hInicio} às ${hFim}).`
     );
   }
 
@@ -316,8 +450,8 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
     id_cliente: cliente.id,
     cliente_nome: cliente.nome,
     cliente_telefone: cliente.telefone,
-    data: dto.data,
-    horario_inicio: dto.horario_inicio,
+    data: dataFormatada,
+    horario_inicio: horarioInicioFormatado,
     horario_fim: horarioFim,
     duracao_total_minutos: duracaoTotal,
     valor_total: valorTotal,
@@ -329,13 +463,19 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
   };
 
   mockAgendamentos.push(novoAgendamento);
+  salvarDadosLocais(mockClientes, mockAgendamentos);
   return novoAgendamento;
 }
 
+// ==============================================================
+// AGENDAMENTOS: ATUALIZAR STATUS (CONFIRMADO, CANCELADO, ETC.)
+// ==============================================================
 export async function atualizarStatusAgendamento(
   id: string,
   novoStatus: StatusAgendamento
 ): Promise<Agendamento | null> {
+  let resultado: Agendamento | null = null;
+
   if (process.env.DATABASE_URL) {
     try {
       await pool.query(
@@ -344,61 +484,52 @@ export async function atualizarStatusAgendamento(
          WHERE id = $2`,
         [novoStatus, id]
       );
-      const res = await pool.query(
-        `SELECT * FROM vw_agendamentos_dashboard WHERE id = $1 LIMIT 1`,
-        [id]
-      );
+      const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.id = $1 ${SQL_GROUP_BY_AGENDAMENTOS} LIMIT 1`;
+      const res = await pool.query(sql, [id]);
       if (res.rows[0]) {
-        return res.rows[0];
+        resultado = res.rows[0];
       }
     } catch (err) {
-      console.warn('Erro ao atualizar status no PostgreSQL. Usando mock.', err);
+      console.warn('Erro ao atualizar status no PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
+  // Atualiza também no armazenamento persistente local
   const ag = mockAgendamentos.find((a) => a.id === id);
   if (ag) {
     ag.status = novoStatus;
-    return ag;
-  }
-  return null;
-}
-
-export async function obterAgendamentoPorId(id: string): Promise<Agendamento | null> {
-  if (process.env.DATABASE_URL) {
-    try {
-      const res = await pool.query(
-        `SELECT * FROM vw_agendamentos_dashboard WHERE id = $1 LIMIT 1`,
-        [id]
-      );
-      if (res.rows[0]) {
-        return res.rows[0];
-      }
-    } catch (err) {
-      console.warn('Erro ao consultar agendamento por ID no PostgreSQL. Usando mock.', err);
+    if (!resultado) {
+      resultado = ag;
     }
   }
 
-  const achado = mockAgendamentos.find((a) => a.id === id);
-  return achado || null;
+  salvarDadosLocais(mockClientes, mockAgendamentos);
+  return resultado;
 }
 
+// ==============================================================
+// AGENDAMENTOS: EXCLUIR
+// ==============================================================
 export async function excluirAgendamento(id: string): Promise<boolean> {
+  let excluiuPg = false;
+
   if (process.env.DATABASE_URL) {
     try {
-      // Remove vínculos de serviços antes de excluir o agendamento
       await pool.query('DELETE FROM agendamento_servicos WHERE id_agendamento = $1', [id]);
       const res = await pool.query('DELETE FROM agendamentos WHERE id = $1 RETURNING id', [id]);
-      return (res.rowCount ?? 0) > 0;
+      excluiuPg = (res.rowCount ?? 0) > 0;
     } catch (err) {
-      console.warn('Erro ao excluir agendamento no PostgreSQL. Usando mock.', err);
+      console.warn('Erro ao excluir agendamento no PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
   const idx = mockAgendamentos.findIndex((a) => a.id === id);
+  let excluiuLocal = false;
   if (idx !== -1) {
     mockAgendamentos.splice(idx, 1);
-    return true;
+    salvarDadosLocais(mockClientes, mockAgendamentos);
+    excluiuLocal = true;
   }
-  return false;
+
+  return excluiuPg || excluiuLocal;
 }

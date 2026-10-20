@@ -13,12 +13,14 @@ interface CardAgendamentoProps {
   agendamento: Agendamento;
   onAtualizarStatus: (id: string, novoStatus: StatusAgendamento) => Promise<void>;
   onExcluir?: (id: string) => Promise<void>;
+  destacado?: boolean;
 }
 
 export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
   agendamento,
   onAtualizarStatus,
   onExcluir,
+  destacado = false,
 }) => {
   const [atualizando, setAtualizando] = useState(false);
   const [excluindo, setExcluindo] = useState(false);
@@ -57,20 +59,58 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
 
   return (
     <div
+      id={`card-agendamento-${agendamento.id}`}
       className="animate-fade-in"
       style={{
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: 'var(--bg-card)',
+        backgroundColor: destacado ? '#fffef7' : 'var(--bg-card)',
         borderRadius: 'var(--radius-md)',
-        border: '1px solid var(--border-color)',
+        border: destacado ? '2px solid #f59e0b' : '1px solid var(--border-color)',
         borderLeft: `6px solid ${coresBordaPorStatus[agendamento.status]}`,
-        boxShadow: 'var(--shadow-sm)',
+        boxShadow: destacado
+          ? '0 0 0 3px rgba(245, 158, 11, 0.3), 0 8px 24px rgba(245, 158, 11, 0.2)'
+          : 'var(--shadow-sm)',
         padding: '20px',
         gap: '14px',
-        transition: 'transform 0.2s, box-shadow 0.2s',
+        transition: 'transform 0.2s, box-shadow 0.2s, border-color 0.2s',
       }}
     >
+      {/* Banner de destaque quando selecionado pela fila FIFO */}
+      {destacado && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '8px',
+            backgroundColor: '#fef3c7',
+            border: '1px solid #f59e0b',
+            borderRadius: 'var(--radius-sm)',
+            padding: '8px 12px',
+            fontSize: '0.8125rem',
+            fontWeight: 700,
+            color: '#92400e',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '1rem' }}>🔔</span>
+            <span>Agendamento em Foco na Fila de Pendentes (FIFO)</span>
+          </div>
+          {agendamento.created_at && (
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#b45309' }}>
+              Solicitado em:{' '}
+              {new Date(agendamento.created_at).toLocaleDateString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </span>
+          )}
+        </div>
+      )}
       {/* Topo do Card: Horário, Duração e Badge de Status */}
       <div
         style={{

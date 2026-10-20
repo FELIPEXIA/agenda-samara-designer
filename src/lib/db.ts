@@ -64,6 +64,10 @@ let mockClientes: Cliente[] = [
 // Gera data de hoje no formato YYYY-MM-DD
 const hojeISO = new Date().toISOString().split('T')[0];
 
+const amanhaDate = new Date();
+amanhaDate.setDate(amanhaDate.getDate() + 1);
+const amanhaISO = amanhaDate.toISOString().split('T')[0];
+
 let mockAgendamentos: Agendamento[] = [
   {
     id: 'ag-1',
@@ -94,6 +98,7 @@ let mockAgendamentos: Agendamento[] = [
     status: 'Pendente',
     lista_servicos: 'Henna',
     observacoes: 'Aguardando confirmação de horário via WhatsApp',
+    created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
   },
   {
     id: 'ag-3',
@@ -124,6 +129,22 @@ let mockAgendamentos: Agendamento[] = [
     status: 'Cancelado',
     lista_servicos: 'Unha de Gel',
     observacoes: 'Desmarcou por imprevisto no trabalho',
+  },
+  {
+    id: 'ag-5',
+    id_cliente: 'cli-5',
+    cliente_nome: 'Larissa Carvalho',
+    cliente_telefone: '27999887766',
+    data: amanhaISO,
+    horario_inicio: '14:00',
+    horario_fim: '15:30',
+    duracao_total_minutos: 90,
+    valor_total: 65.0,
+    forma_pagamento: 'Pix',
+    status: 'Pendente',
+    lista_servicos: 'Mão e Henna',
+    observacoes: 'Solicitou atendimento pelo link público de autoatendimento',
+    created_at: new Date(Date.now() - 1 * 3600 * 1000).toISOString(),
   },
 ];
 
@@ -232,6 +253,33 @@ export async function listarAgendamentosPorData(data: string): Promise<Agendamen
   return mockAgendamentos
     .filter((a) => a.data === data)
     .sort((a, b) => a.horario_inicio.localeCompare(b.horario_inicio));
+}
+
+export async function listarAgendamentosPendentes(): Promise<Agendamento[]> {
+  if (process.env.DATABASE_URL) {
+    try {
+      const res = await pool.query(
+        `SELECT * FROM vw_agendamentos_dashboard 
+         WHERE status = 'Pendente' 
+         ORDER BY created_at ASC, data ASC, horario_inicio ASC`
+      );
+      return res.rows;
+    } catch (err) {
+      console.warn('Erro ao listar agendamentos pendentes do PostgreSQL. Usando mock.', err);
+    }
+  }
+
+  return [...mockAgendamentos]
+    .filter((a) => a.status === 'Pendente')
+    .sort((a, b) => {
+      if (a.created_at && b.created_at) {
+        const diff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        if (diff !== 0) return diff;
+      }
+      const cmpData = a.data.localeCompare(b.data);
+      if (cmpData !== 0) return cmpData;
+      return a.horario_inicio.localeCompare(b.horario_inicio);
+    });
 }
 
 export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agendamento> {
@@ -352,6 +400,7 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
     status: dto.status || 'Confirmado',
     observacoes: dto.observacoes,
     lista_servicos: listaServicosTexto,
+    created_at: new Date().toISOString(),
   };
 
   mockAgendamentos.push(novoAgendamento);

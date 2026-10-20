@@ -7,17 +7,22 @@ import { formatarMoeda } from '@/lib/formatters';
 
 interface HeaderResumoProps {
   agendamentos: Agendamento[];
+  totalPendentesGeral: number;
   onAbrirModalNovo: () => void;
+  onCliquePendentes: () => void;
+  posicaoFilaAtual?: { indice: number; total: number } | null;
 }
 
 export const HeaderResumo: React.FC<HeaderResumoProps> = ({
   agendamentos,
+  totalPendentesGeral,
   onAbrirModalNovo,
+  onCliquePendentes,
+  posicaoFilaAtual = null,
 }) => {
   const confirmados = agendamentos.filter((a) => a.status === 'Confirmado');
-  const pendentes = agendamentos.filter((a) => a.status === 'Pendente');
   
-  // Total previsto apenas de agendamentos confirmados ou pendentes
+  // Total previsto apenas de agendamentos confirmados ou pendentes do dia
   const faturamentoPrevisto = agendamentos
     .filter((a) => a.status !== 'Cancelado')
     .reduce((acc, curr) => acc + Number(curr.valor_total || 0), 0);
@@ -142,13 +147,16 @@ export const HeaderResumo: React.FC<HeaderResumoProps> = ({
         </div>
       </div>
 
-      {/* Alerta de Agendamentos Pendentes Aguardando Aprovação */}
-      {pendentes.length > 0 && (
+      {/* Alerta Geral de Agendamentos Pendentes Aguardando Aprovação */}
+      {totalPendentesGeral > 0 && (
         <div
+          onClick={onCliquePendentes}
+          title="Clique para ir ao próximo agendamento pendente por ordem de chegada"
           style={{
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            flexWrap: 'wrap',
             gap: '12px',
             backgroundColor: '#fffbeb',
             border: '1.5px solid #f59e0b',
@@ -156,6 +164,17 @@ export const HeaderResumo: React.FC<HeaderResumoProps> = ({
             padding: '12px 16px',
             color: '#b45309',
             fontSize: '0.9rem',
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+            boxShadow: '0 2px 10px rgba(245, 158, 11, 0.15)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#fef3c7';
+            e.currentTarget.style.transform = 'translateY(-1px)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = '#fffbeb';
+            e.currentTarget.style.transform = 'translateY(0)';
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -163,13 +182,13 @@ export const HeaderResumo: React.FC<HeaderResumoProps> = ({
             <span>
               <strong>Atenção, Samara:</strong> Você tem{' '}
               <strong style={{ color: '#d97706', textDecoration: 'underline' }}>
-                {pendentes.length} agendamento{pendentes.length > 1 ? 's' : ''} pendente{pendentes.length > 1 ? 's' : ''}
+                {totalPendentesGeral} agendamento{totalPendentesGeral > 1 ? 's' : ''} pendente{totalPendentesGeral > 1 ? 's' : ''}
               </strong>{' '}
-              nesta data aguardando sua aprovação!
+              na sua fila de aprovação!
             </span>
           </div>
-          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#92400e' }}>
-            Aprove ou Recuse no card abaixo 👇
+          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#92400e', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            Atender Fila FIFO 👉
           </span>
         </div>
       )}
@@ -219,22 +238,98 @@ export const HeaderResumo: React.FC<HeaderResumoProps> = ({
           </div>
         </div>
 
+        {/* Card Dinâmico de Pendentes: Alerta Ativo (Amarelo/Laranja) ou Retorno ao Normal (Verde Fila Limpa) */}
         <div
+          id="card-metrica-pendentes"
+          onClick={totalPendentesGeral > 0 ? onCliquePendentes : undefined}
+          title={
+            totalPendentesGeral > 0
+              ? 'Clique para ir ao próximo agendamento pendente por ordem de solicitação (FIFO)'
+              : 'Fila limpa! Todos os agendamentos foram respondidos.'
+          }
           style={{
-            backgroundColor: 'var(--status-pendente-bg)',
+            backgroundColor: totalPendentesGeral > 0 ? '#fffbeb' : '#f0fdf4',
             padding: '14px 16px',
             borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--status-pendente-border)',
+            border: totalPendentesGeral > 0 ? '2px solid #f59e0b' : '1.5px solid #86efac',
+            boxShadow:
+              totalPendentesGeral > 0 ? '0 4px 14px rgba(245, 158, 11, 0.25)' : 'var(--shadow-sm)',
+            cursor: totalPendentesGeral > 0 ? 'pointer' : 'default',
+            transition: 'all 0.2s ease',
+            position: 'relative',
+          }}
+          onMouseEnter={(e) => {
+            if (totalPendentesGeral > 0) {
+              e.currentTarget.style.backgroundColor = '#fef3c7';
+              e.currentTarget.style.transform = 'translateY(-2px)';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (totalPendentesGeral > 0) {
+              e.currentTarget.style.backgroundColor = '#fffbeb';
+              e.currentTarget.style.transform = 'translateY(0)';
+            }
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Clock size={14} color="var(--status-pendente)" />
-            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--status-pendente)', textTransform: 'uppercase' }}>
-              Pendentes
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              {totalPendentesGeral > 0 ? (
+                <Clock size={15} color="#d97706" />
+              ) : (
+                <CheckCircle2 size={15} color="#16a34a" />
+              )}
+              <span
+                style={{
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  color: totalPendentesGeral > 0 ? '#d97706' : '#16a34a',
+                  textTransform: 'uppercase',
+                }}
+              >
+                Pendentes
+              </span>
+            </div>
+
+            <span
+              style={{
+                fontSize: '0.65rem',
+                fontWeight: 700,
+                backgroundColor: totalPendentesGeral > 0 ? '#f59e0b' : '#dcfce7',
+                color: totalPendentesGeral > 0 ? '#ffffff' : '#15803d',
+                padding: '2px 7px',
+                borderRadius: '999px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.02em',
+              }}
+            >
+              {totalPendentesGeral > 0
+                ? posicaoFilaAtual
+                  ? `Fila ${posicaoFilaAtual.indice}/${posicaoFilaAtual.total}`
+                  : 'Fila Ativa'
+                : 'Fila Limpa ✨'}
             </span>
           </div>
-          <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--status-pendente)', marginTop: '4px' }}>
-            {pendentes.length}
+
+          <div
+            style={{
+              fontSize: '1.5rem',
+              fontWeight: 800,
+              color: totalPendentesGeral > 0 ? '#b45309' : '#15803d',
+              marginTop: '4px',
+            }}
+          >
+            {totalPendentesGeral}
+          </div>
+
+          <div
+            style={{
+              fontSize: '0.72rem',
+              fontWeight: totalPendentesGeral > 0 ? 700 : 500,
+              color: totalPendentesGeral > 0 ? '#d97706' : '#16a34a',
+              marginTop: '4px',
+            }}
+          >
+            {totalPendentesGeral > 0 ? '👉 Clique p/ atender (FIFO)' : 'Nenhum pendente'}
           </div>
         </div>
 

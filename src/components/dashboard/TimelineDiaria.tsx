@@ -11,6 +11,7 @@ interface TimelineDiariaProps {
   onExcluir?: (id: string) => Promise<void>;
   onAbrirNovoModal: () => void;
   carregando?: boolean;
+  agendamentoDestacadoId?: string | null;
 }
 
 export const TimelineDiaria: React.FC<TimelineDiariaProps> = ({
@@ -19,6 +20,7 @@ export const TimelineDiaria: React.FC<TimelineDiariaProps> = ({
   onExcluir,
   onAbrirNovoModal,
   carregando = false,
+  agendamentoDestacadoId = null,
 }) => {
   if (carregando) {
     return (
@@ -142,6 +144,7 @@ export const TimelineDiaria: React.FC<TimelineDiariaProps> = ({
           agendamento={agendamento}
           onAtualizarStatus={onAtualizarStatus}
           onExcluir={onExcluir}
+          destacado={agendamento.id === agendamentoDestacadoId}
         />
       ))}
     </div>

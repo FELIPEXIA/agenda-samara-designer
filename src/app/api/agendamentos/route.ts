@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { listarAgendamentosPorData, criarAgendamento } from '@/lib/db';
+import { listarAgendamentosPorData, listarAgendamentosPendentes, criarAgendamento } from '@/lib/db';
 import { CriarAgendamentoDTO } from '@/types';
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
+    const pendentesOnly = searchParams.get('pendentes') === 'true' || searchParams.get('status') === 'Pendente';
+
+    if (pendentesOnly) {
+      const agendamentosPendentes = await listarAgendamentosPendentes();
+      return NextResponse.json({ success: true, data: agendamentosPendentes });
+    }
+
     const data = searchParams.get('data') || new Date().toISOString().split('T')[0];
 
     const agendamentos = await listarAgendamentosPorData(data);

@@ -146,6 +146,7 @@ SELECT
     a.forma_pagamento,
     a.status,
     a.observacoes,
+    a.created_at,
     c.id AS cliente_id,
     c.nome AS cliente_nome,
     c.telefone AS cliente_telefone,
@@ -158,3 +159,4 @@ JOIN clientes c ON a.id_cliente = c.id
 LEFT JOIN agendamento_servicos asv ON a.id = asv.id_agendamento
 LEFT JOIN servicos s ON asv.id_servico = s.id
 GROUP BY a.id, c.id;
+

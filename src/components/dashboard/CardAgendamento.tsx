@@ -77,6 +77,8 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
       if (confirmarWhats) {
         window.open(link, '_blank');
       }
+    } catch (err) {
+      console.error('Falha ao confirmar agendamento:', err);
     } finally {
       setAtualizando(false);
     }
@@ -106,6 +108,8 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
       if (avisarWhats) {
         window.open(link, '_blank');
       }
+    } catch (err) {
+      console.error('Falha ao rejeitar agendamento:', err);
     } finally {
       setAtualizando(false);
     }

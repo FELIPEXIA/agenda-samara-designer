@@ -15,7 +15,7 @@ const pool = new Pool({
 // ==============================================================
 // CATÁLOGO OFICIAL DE SERVIÇOS (SAMARA DESIGNER)
 // ==============================================================
-export const mockServicos: Servico[] = [
+export const catalogoServicos: Servico[] = [
   // Procedimentos Individuais de Unhas e Sobrancelhas
   { id: 'srv-1', nome_servico: 'Pé e Mão', categoria: 'Unhas Tradicionais', valor_base: 45.0, duracao_minutos: 120, ativo: true },
   { id: 'srv-2', nome_servico: 'Pé', categoria: 'Unhas Tradicionais', valor_base: 35.0, duracao_minutos: 60, ativo: true },
@@ -55,9 +55,11 @@ export const mockServicos: Servico[] = [
   { id: 'srv-24', nome_servico: 'Manutenção e Henna', categoria: 'Combos Gel', valor_base: 125.0, duracao_minutos: 240, ativo: true },
 ];
 
+export const mockServicos = catalogoServicos; // Retrocompatibilidade
+
 // ==============================================================
 // PERSISTÊNCIA EM ARQUIVO LOCAL (database/data.json)
-// Garante que nenhum agendamento seja perdido mesmo sem banco remoto
+// Fonte de dados local garantida e segura contra perdas
 // ==============================================================
 const DATA_FILE = path.join(process.cwd(), 'database', 'data.json');
 
@@ -65,11 +67,13 @@ function carregarDadosLocais(): { clientes: Cliente[]; agendamentos: Agendamento
   try {
     if (fs.existsSync(DATA_FILE)) {
       const conteudo = fs.readFileSync(DATA_FILE, 'utf-8');
-      const parsed = JSON.parse(conteudo);
-      return {
-        clientes: Array.isArray(parsed.clientes) ? parsed.clientes : [],
-        agendamentos: Array.isArray(parsed.agendamentos) ? parsed.agendamentos : [],
-      };
+      if (conteudo && conteudo.trim()) {
+        const parsed = JSON.parse(conteudo);
+        return {
+          clientes: Array.isArray(parsed.clientes) ? parsed.clientes : [],
+          agendamentos: Array.isArray(parsed.agendamentos) ? parsed.agendamentos : [],
+        };
+      }
     }
   } catch (err) {
     console.error('Erro ao ler database/data.json:', err);
@@ -89,25 +93,8 @@ function salvarDadosLocais(clientes: Cliente[], agendamentos: Agendamento[]): vo
   }
 }
 
-// Armazenamento em memória sincronizado com disco
-const globalStore = globalThis as unknown as {
-  localClientes?: Cliente[];
-  localAgendamentos?: Agendamento[];
-  dadosCarregados?: boolean;
-};
-
-if (!globalStore.dadosCarregados) {
-  const iniciais = carregarDadosLocais();
-  globalStore.localClientes = iniciais.clientes;
-  globalStore.localAgendamentos = iniciais.agendamentos;
-  globalStore.dadosCarregados = true;
-}
-
-const mockClientes: Cliente[] = globalStore.localClientes || [];
-const mockAgendamentos: Agendamento[] = globalStore.localAgendamentos || [];
-
 // ==============================================================
-// CONSULTA SQL ROBUSTA E COMPATÍVEL (SEM DEPENDÊNCIA DE VIEW OU GROUP BY)
+// CONSULTA SQL ROBUSTA E COMPATÍVEL
 // ==============================================================
 const SQL_SELECT_AGENDAMENTOS = `
   SELECT 
@@ -121,6 +108,7 @@ const SQL_SELECT_AGENDAMENTOS = `
     a.status, 
     a.observacoes, 
     a.created_at, 
+    c.id AS id_cliente,
     c.id AS cliente_id, 
     c.nome AS cliente_nome, 
     c.telefone AS cliente_telefone, 
@@ -147,7 +135,7 @@ export async function listarServicos(): Promise<Servico[]> {
       }
 
       // Se tabela servicos estiver vazia no PostgreSQL, auto-popula com a tabela oficial de Samara Designer
-      for (const s of mockServicos) {
+      for (const s of catalogoServicos) {
         await pool.query(
           `INSERT INTO servicos (id, nome_servico, categoria, valor_base, duracao_minutos, ativo)
            VALUES ($1, $2, $3, $4, $5, $6)
@@ -161,10 +149,10 @@ export async function listarServicos(): Promise<Servico[]> {
         return resPosSeed.rows;
       }
     } catch (err) {
-      console.warn('Erro ao consultar/popular PostgreSQL para serviços. Usando dados locais.', err);
+      console.warn('Erro ao consultar/popular PostgreSQL para serviços. Usando catálogo local.', err);
     }
   }
-  return mockServicos.filter((s) => s.ativo);
+  return catalogoServicos.filter((s) => s.ativo);
 }
 
 // ==============================================================
@@ -189,11 +177,12 @@ export async function buscarClientes(termo?: string): Promise<Cliente[]> {
     }
   }
 
+  const { clientes } = carregarDadosLocais();
   if (termo && termo.trim()) {
     const t = termo.toLowerCase();
-    return mockClientes.filter((c) => c.nome.toLowerCase().includes(t) || c.telefone.includes(t));
+    return clientes.filter((c) => c.nome.toLowerCase().includes(t) || c.telefone.includes(t));
   }
-  return mockClientes;
+  return clientes;
 }
 
 export async function obterOuCriarCliente(dados: {
@@ -222,11 +211,11 @@ export async function obterOuCriarCliente(dados: {
         [dados.nome.trim(), telefoneSanitizado, dados.observacoes?.trim() || null]
       );
       if (ins.rows[0]) {
-        // Também salva no espelho local
-        const achadoLocal = mockClientes.find((c) => c.telefone === telefoneSanitizado);
+        const dadosLocais = carregarDadosLocais();
+        const achadoLocal = dadosLocais.clientes.find((c) => c.telefone === telefoneSanitizado);
         if (!achadoLocal) {
-          mockClientes.push(ins.rows[0]);
-          salvarDadosLocais(mockClientes, mockAgendamentos);
+          dadosLocais.clientes.push(ins.rows[0]);
+          salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos);
         }
         return ins.rows[0];
       }
@@ -235,11 +224,12 @@ export async function obterOuCriarCliente(dados: {
     }
   }
 
+  const dadosLocais = carregarDadosLocais();
   if (dados.id) {
-    const achado = mockClientes.find((c) => c.id === dados.id);
+    const achado = dadosLocais.clientes.find((c) => c.id === dados.id);
     if (achado) return achado;
   }
-  const existentePorTelefone = mockClientes.find((c) => c.telefone === telefoneSanitizado);
+  const existentePorTelefone = dadosLocais.clientes.find((c) => c.telefone === telefoneSanitizado);
   if (existentePorTelefone) return existentePorTelefone;
 
   const novoCliente: Cliente = {
@@ -248,8 +238,8 @@ export async function obterOuCriarCliente(dados: {
     telefone: telefoneSanitizado,
     observacoes: dados.observacoes?.trim(),
   };
-  mockClientes.push(novoCliente);
-  salvarDadosLocais(mockClientes, mockAgendamentos);
+  dadosLocais.clientes.push(novoCliente);
+  salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos);
   return novoCliente;
 }
 
@@ -271,8 +261,9 @@ export async function listarAgendamentosPorData(data: string): Promise<Agendamen
     }
   }
 
-  // Retorna todos os agendamentos persistidos na data selecionada
-  return mockAgendamentos
+  // Retorna todos os agendamentos reais persistidos na data selecionada
+  const { agendamentos } = carregarDadosLocais();
+  return agendamentos
     .filter((a) => (a.data ? a.data.substring(0, 10) === dataAlvo : false))
     .sort((a, b) => a.horario_inicio.localeCompare(b.horario_inicio));
 }
@@ -293,7 +284,8 @@ export async function listarAgendamentosPendentes(): Promise<Agendamento[]> {
     }
   }
 
-  return [...mockAgendamentos]
+  const { agendamentos } = carregarDadosLocais();
+  return agendamentos
     .filter((a) => a.status === 'Pendente')
     .sort((a, b) => {
       if (a.created_at && b.created_at) {
@@ -314,7 +306,7 @@ export async function obterAgendamentoPorId(id: string): Promise<Agendamento | n
     try {
       const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.id = $1 ${SQL_GROUP_BY_AGENDAMENTOS} LIMIT 1`;
       const res = await pool.query(sql, [id]);
-      if (res.rows[0]) {
+      if (res && res.rows[0]) {
         return res.rows[0];
       }
     } catch (err) {
@@ -322,7 +314,8 @@ export async function obterAgendamentoPorId(id: string): Promise<Agendamento | n
     }
   }
 
-  const achado = mockAgendamentos.find((a) => a.id === id);
+  const { agendamentos } = carregarDadosLocais();
+  const achado = agendamentos.find((a) => a.id === id);
   return achado || null;
 }
 
@@ -402,6 +395,7 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
 
       const retornoPg: Agendamento = {
         ...agendamentoCriado,
+        id_cliente: cliente.id,
         cliente_id: cliente.id,
         cliente_nome: cliente.nome,
         cliente_telefone: cliente.telefone,
@@ -409,13 +403,14 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
       };
 
       // Espelha no arquivo local para garantir persistência contínua
-      const idxLocal = mockAgendamentos.findIndex((a) => a.id === retornoPg.id);
+      const dadosLocais = carregarDadosLocais();
+      const idxLocal = dadosLocais.agendamentos.findIndex((a) => a.id === retornoPg.id);
       if (idxLocal >= 0) {
-        mockAgendamentos[idxLocal] = retornoPg;
+        dadosLocais.agendamentos[idxLocal] = retornoPg;
       } else {
-        mockAgendamentos.push(retornoPg);
+        dadosLocais.agendamentos.push(retornoPg);
       }
-      salvarDadosLocais(mockClientes, mockAgendamentos);
+      salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos);
 
       return retornoPg;
     } catch (err: any) {
@@ -430,7 +425,8 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
   }
 
   // Fallback em armazenamento local com validação estrita de sobreposição
-  const conflitoMemoria = mockAgendamentos.find(
+  const dadosLocais = carregarDadosLocais();
+  const conflitoMemoria = dadosLocais.agendamentos.find(
     (a) =>
       a.data?.substring(0, 10) === dataFormatada &&
       a.status !== 'Cancelado' &&
@@ -462,8 +458,8 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
     created_at: new Date().toISOString(),
   };
 
-  mockAgendamentos.push(novoAgendamento);
-  salvarDadosLocais(mockClientes, mockAgendamentos);
+  dadosLocais.agendamentos.push(novoAgendamento);
+  salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos);
   return novoAgendamento;
 }
 
@@ -486,7 +482,7 @@ export async function atualizarStatusAgendamento(
       );
       const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.id = $1 ${SQL_GROUP_BY_AGENDAMENTOS} LIMIT 1`;
       const res = await pool.query(sql, [id]);
-      if (res.rows[0]) {
+      if (res && res.rows[0]) {
         resultado = res.rows[0];
       }
     } catch (err) {
@@ -495,15 +491,18 @@ export async function atualizarStatusAgendamento(
   }
 
   // Atualiza também no armazenamento persistente local
-  const ag = mockAgendamentos.find((a) => a.id === id);
-  if (ag) {
-    ag.status = novoStatus;
+  const dadosLocais = carregarDadosLocais();
+  const idx = dadosLocais.agendamentos.findIndex((a) => a.id === id);
+  if (idx !== -1) {
+    dadosLocais.agendamentos[idx].status = novoStatus;
     if (!resultado) {
-      resultado = ag;
+      resultado = dadosLocais.agendamentos[idx];
     }
+  } else if (resultado) {
+    dadosLocais.agendamentos.push(resultado);
   }
 
-  salvarDadosLocais(mockClientes, mockAgendamentos);
+  salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos);
   return resultado;
 }
 
@@ -523,11 +522,12 @@ export async function excluirAgendamento(id: string): Promise<boolean> {
     }
   }
 
-  const idx = mockAgendamentos.findIndex((a) => a.id === id);
+  const dadosLocais = carregarDadosLocais();
+  const idx = dadosLocais.agendamentos.findIndex((a) => a.id === id);
   let excluiuLocal = false;
   if (idx !== -1) {
-    mockAgendamentos.splice(idx, 1);
-    salvarDadosLocais(mockClientes, mockAgendamentos);
+    dadosLocais.agendamentos.splice(idx, 1);
+    salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos);
     excluiuLocal = true;
   }
 

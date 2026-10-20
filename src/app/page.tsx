@@ -136,8 +136,9 @@ export default function DashboardPage() {
     setAgendamentoDestacadoId(alvo.id);
 
     // Se o agendamento pendente for de outra data, navega automaticamente o calendário
-    if (alvo.data !== dataSelecionada) {
-      setDataSelecionada(alvo.data);
+    const alvoDataCurta = (alvo.data || '').substring(0, 10);
+    if (alvoDataCurta && alvoDataCurta !== dataSelecionada) {
+      setDataSelecionada(alvoDataCurta);
     } else {
       // Se já estiver na mesma data, rola suavemente até o elemento
       setTimeout(() => {
@@ -164,6 +165,16 @@ export default function DashboardPage() {
 
   // Atualização instantânea de status (Confirmado / Pendente / Cancelado)
   const handleAtualizarStatus = async (id: string, novoStatus: StatusAgendamento) => {
+    // 1. Atualização otimista imediata para resposta instantânea na tela
+    setAgendamentos((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, status: novoStatus } : item
+      )
+    );
+    if (novoStatus !== 'Pendente') {
+      setAgendamentosPendentes((prev) => prev.filter((item) => item.id !== id));
+    }
+
     try {
       const res = await fetch(`/api/agendamentos/${id}`, {
         method: 'PATCH',
@@ -171,34 +182,42 @@ export default function DashboardPage() {
         body: JSON.stringify({ status: novoStatus }),
       });
       const json = await res.json();
-      if (json.success) {
-        // Atualiza no dia atual mantendo o card visível na tela com o novo status
-        setAgendamentos((prev) =>
-          prev.map((item) =>
-            item.id === id ? { ...item, ...(json.data || {}), status: novoStatus } : item
-          )
-        );
-
-        // Atualiza a fila geral de pendentes e remove o destaque FIFO sem trocar a data da tela
-        setAgendamentosPendentes((prev) => prev.filter((item) => item.id !== id));
-        setIndiceFilaPendente(-1);
-        setAgendamentoDestacadoId(null);
-
-        // Sincroniza estado com a API e notifica abas
-        carregarPendentes();
-        try {
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('agenda_samara_sync', Date.now().toString());
-            if ('BroadcastChannel' in window) {
-              const channel = new BroadcastChannel('agenda_samara_sync_channel');
-              channel.postMessage({ type: 'STATUS_ALTERADO', id });
-              channel.close();
-            }
-          }
-        } catch (e) {}
+      if (!res.ok || !json.success) {
+        // Se houve erro na gravação, reverte o estado e avisa
+        console.error('Erro na resposta do backend:', json.error);
+        alert(json.error || 'Não foi possível atualizar o status do agendamento.');
+        await carregarAgendamentos(true);
+        await carregarPendentes();
+        throw new Error(json.error || 'Erro ao atualizar status');
       }
+
+      // 2. Confirma com os dados consolidados do servidor
+      setAgendamentos((prev) =>
+        prev.map((item) =>
+          item.id === id ? { ...item, ...(json.data || {}), status: novoStatus } : item
+        )
+      );
+
+      // Atualiza a fila geral de pendentes e remove o destaque FIFO sem trocar a data da tela
+      setAgendamentosPendentes((prev) => prev.filter((item) => item.id !== id));
+      setIndiceFilaPendente(-1);
+      setAgendamentoDestacadoId(null);
+
+      // Sincroniza estado com a API e notifica abas
+      carregarPendentes();
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('agenda_samara_sync', Date.now().toString());
+          if ('BroadcastChannel' in window) {
+            const channel = new BroadcastChannel('agenda_samara_sync_channel');
+            channel.postMessage({ type: 'STATUS_ALTERADO', id, status: novoStatus });
+            channel.close();
+          }
+        }
+      } catch (e) {}
     } catch (error) {
       console.error('Erro ao atualizar status:', error);
+      throw error;
     }
   };
 

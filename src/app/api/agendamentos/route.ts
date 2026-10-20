@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { listarAgendamentosPorData, listarAgendamentosPendentes, criarAgendamento } from '@/lib/db';
 import { CriarAgendamentoDTO } from '@/types';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+  Pragma: 'no-cache',
+  Expires: '0',
+};
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -9,18 +18,24 @@ export async function GET(req: NextRequest) {
 
     if (pendentesOnly) {
       const agendamentosPendentes = await listarAgendamentosPendentes();
-      return NextResponse.json({ success: true, data: agendamentosPendentes });
+      return NextResponse.json(
+        { success: true, data: agendamentosPendentes },
+        { headers: NO_CACHE_HEADERS }
+      );
     }
 
     const data = searchParams.get('data') || new Date().toISOString().split('T')[0];
 
     const agendamentos = await listarAgendamentosPorData(data);
-    return NextResponse.json({ success: true, data: agendamentos });
+    return NextResponse.json(
+      { success: true, data: agendamentos },
+      { headers: NO_CACHE_HEADERS }
+    );
   } catch (error) {
     console.error('Erro ao buscar agendamentos:', error);
     return NextResponse.json(
       { success: false, error: 'Erro ao buscar agendamentos' },
-      { status: 500 }
+      { status: 500, headers: NO_CACHE_HEADERS }
     );
   }
 }

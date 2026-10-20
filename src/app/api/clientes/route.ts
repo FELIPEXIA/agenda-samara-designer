@@ -1,12 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { buscarClientes, obterOuCriarCliente } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const termo = searchParams.get('busca') || '';
     const clientes = await buscarClientes(termo);
-    return NextResponse.json({ success: true, data: clientes });
+    return NextResponse.json(
+      { success: true, data: clientes },
+      {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate',
+        },
+      }
+    );
   } catch (error) {
     console.error('Erro ao buscar clientes:', error);
     return NextResponse.json(

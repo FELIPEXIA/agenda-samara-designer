@@ -64,7 +64,10 @@ export const ModalNovoAgendamento: React.FC<ModalNovoAgendamentoProps> = ({
   // Carrega agendamentos da data selecionada para validação e bloqueio de horários
   useEffect(() => {
     if (aberto && data) {
-      fetch(`/api/agendamentos?data=${data}`)
+      fetch(`/api/agendamentos?data=${data}&_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      })
         .then((res) => res.json())
         .then((json) => {
           if (json.success) {
@@ -193,6 +196,17 @@ export const ModalNovoAgendamento: React.FC<ModalNovoAgendamentoProps> = ({
       }
 
       // Sucesso!
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('agenda_samara_sync', Date.now().toString());
+          if ('BroadcastChannel' in window) {
+            const channel = new BroadcastChannel('agenda_samara_sync_channel');
+            channel.postMessage({ type: 'NOVO_AGENDAMENTO', id: json.data?.id });
+            channel.close();
+          }
+        }
+      } catch (e) {}
+
       onAgendamentoCriado();
       onFechar();
       // Reseta form

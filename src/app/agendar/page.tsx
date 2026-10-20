@@ -80,7 +80,10 @@ export default function AgendarPublicoPage() {
   // Carrega agendamentos da data selecionada para verificar horários ocupados
   useEffect(() => {
     if (dataSelecionada) {
-      fetch(`/api/agendamentos?data=${dataSelecionada}`)
+      fetch(`/api/agendamentos?data=${dataSelecionada}&_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      })
         .then((res) => res.json())
         .then((json) => {
           if (json.success) {
@@ -196,6 +199,20 @@ export default function AgendarPublicoPage() {
         throw new Error(json.error || 'Erro ao processar agendamento.');
       }
 
+      // Notifica o painel administrativo para sincronização instantânea
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('agenda_samara_sync', Date.now().toString());
+          if ('BroadcastChannel' in window) {
+            const channel = new BroadcastChannel('agenda_samara_sync_channel');
+            channel.postMessage({ type: 'NOVO_AGENDAMENTO', id: json.data?.id });
+            channel.close();
+          }
+        }
+      } catch (e) {
+        // Silencioso se restrito pelo navegador
+      }
+
       setAgendamentoCriado(json.data);
       setEtapa(4); // Tela de Sucesso
     } catch (err: any) {
@@ -222,6 +239,17 @@ export default function AgendarPublicoPage() {
       });
       const json = await res.json();
       if (json.success) {
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('agenda_samara_sync', Date.now().toString());
+            if ('BroadcastChannel' in window) {
+              const channel = new BroadcastChannel('agenda_samara_sync_channel');
+              channel.postMessage({ type: 'STATUS_ALTERADO', id: agendamentoCriado.id });
+              channel.close();
+            }
+          }
+        } catch (e) {}
+
         setAgendamentoCriado((prev) => (prev ? { ...prev, status: 'Cancelado' } : null));
         alert('Agendamento cancelado com sucesso. O horário foi liberado.');
       }

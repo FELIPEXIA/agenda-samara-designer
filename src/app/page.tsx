@@ -21,25 +21,40 @@ export default function DashboardPage() {
   const [agendamentoDestacadoId, setAgendamentoDestacadoId] = useState<string | null>(null);
 
   // Busca os agendamentos do dia selecionado
-  const carregarAgendamentos = useCallback(async () => {
-    setCarregando(true);
-    try {
-      const res = await fetch(`/api/agendamentos?data=${dataSelecionada}`);
-      const json = await res.json();
-      if (json.success) {
-        setAgendamentos(json.data);
+  const carregarAgendamentos = useCallback(
+    async (isSilent = false) => {
+      if (!isSilent) setCarregando(true);
+      try {
+        const res = await fetch(`/api/agendamentos?data=${dataSelecionada}&_t=${Date.now()}`, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            Pragma: 'no-cache',
+          },
+        });
+        const json = await res.json();
+        if (json.success) {
+          setAgendamentos(json.data || []);
+        }
+      } catch (error) {
+        console.error('Erro ao buscar agendamentos:', error);
+      } finally {
+        if (!isSilent) setCarregando(false);
       }
-    } catch (error) {
-      console.error('Erro ao buscar agendamentos:', error);
-    } finally {
-      setCarregando(false);
-    }
-  }, [dataSelecionada]);
+    },
+    [dataSelecionada]
+  );
 
   // Busca todos os agendamentos pendentes (presente e futuro) em ordem FIFO de solicitação
   const carregarPendentes = useCallback(async () => {
     try {
-      const res = await fetch('/api/agendamentos?pendentes=true');
+      const res = await fetch(`/api/agendamentos?pendentes=true&_t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache',
+        },
+      });
       const json = await res.json();
       if (json.success) {
         setAgendamentosPendentes(json.data || []);
@@ -49,13 +64,64 @@ export default function DashboardPage() {
     }
   }, []);
 
+  // Carregamento inicial ao montar ou trocar de data
   useEffect(() => {
     carregarAgendamentos();
-  }, [carregarAgendamentos]);
-
-  useEffect(() => {
     carregarPendentes();
-  }, [carregarPendentes]);
+  }, [carregarAgendamentos, carregarPendentes]);
+
+  // Sincronização em tempo real:
+  // 1. Polling contínuo (a cada 4 segundos)
+  // 2. Revalidate on Focus & Visibility Change (quando a Samara volta ao navegador após checar WhatsApp)
+  // 3. Notificação cross-tab instantânea (BroadcastChannel + LocalStorage)
+  useEffect(() => {
+    const sincronizarTudo = () => {
+      carregarAgendamentos(true);
+      carregarPendentes();
+    };
+
+    // 1. Polling a cada 4 segundos
+    const intervalId = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        sincronizarTudo();
+      }
+    }, 4000);
+
+    // 2. Revalidação ao focar na janela / aba
+    const handleRevalidate = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        sincronizarTudo();
+      }
+    };
+    window.addEventListener('focus', handleRevalidate);
+    document.addEventListener('visibilitychange', handleRevalidate);
+
+    // 3. Sincronização entre abas
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'agenda_samara_sync') {
+        sincronizarTudo();
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    let channel: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      channel = new BroadcastChannel('agenda_samara_sync_channel');
+      channel.onmessage = () => {
+        sincronizarTudo();
+      };
+    }
+
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', handleRevalidate);
+      document.removeEventListener('visibilitychange', handleRevalidate);
+      window.removeEventListener('storage', handleStorage);
+      if (channel) {
+        channel.close();
+      }
+    };
+  }, [carregarAgendamentos, carregarPendentes]);
 
   // Navegação da Fila FIFO ao clicar no Card de Pendentes
   const handleCliqueCardPendentes = () => {
@@ -128,8 +194,18 @@ export default function DashboardPage() {
           return restantes;
         });
 
-        // Sincroniza estado com a API
+        // Sincroniza estado com a API e notifica abas
         carregarPendentes();
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('agenda_samara_sync', Date.now().toString());
+            if ('BroadcastChannel' in window) {
+              const channel = new BroadcastChannel('agenda_samara_sync_channel');
+              channel.postMessage({ type: 'STATUS_ALTERADO', id });
+              channel.close();
+            }
+          }
+        } catch (e) {}
       }
     } catch (error) {
       console.error('Erro ao atualizar status:', error);
@@ -154,6 +230,16 @@ export default function DashboardPage() {
           return restantes;
         });
         carregarPendentes();
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('agenda_samara_sync', Date.now().toString());
+            if ('BroadcastChannel' in window) {
+              const channel = new BroadcastChannel('agenda_samara_sync_channel');
+              channel.postMessage({ type: 'EXCLUIDO', id });
+              channel.close();
+            }
+          }
+        } catch (e) {}
       } else {
         alert(json.error || 'Erro ao excluir agendamento.');
       }

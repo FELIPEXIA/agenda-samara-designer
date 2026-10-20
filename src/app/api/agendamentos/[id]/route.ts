@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { atualizarStatusAgendamento, obterAgendamentoPorId, excluirAgendamento } from '@/lib/db';
 import { StatusAgendamento } from '@/types';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+  Pragma: 'no-cache',
+  Expires: '0',
+};
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
@@ -13,16 +22,16 @@ export async function GET(
     if (!agendamento) {
       return NextResponse.json(
         { success: false, error: 'Agendamento não encontrado' },
-        { status: 404 }
+        { status: 404, headers: NO_CACHE_HEADERS }
       );
     }
 
-    return NextResponse.json({ success: true, data: agendamento });
+    return NextResponse.json({ success: true, data: agendamento }, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     console.error('Erro ao buscar agendamento por ID:', error);
     return NextResponse.json(
       { success: false, error: 'Erro ao carregar agendamento' },
-      { status: 500 }
+      { status: 500, headers: NO_CACHE_HEADERS }
     );
   }
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Sparkles, CalendarPlus, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { Sparkles, CalendarPlus, CheckCircle2, Clock, AlertCircle, RotateCw } from 'lucide-react';
 import { Agendamento } from '@/types';
 import { formatarMoeda } from '@/lib/formatters';
 
@@ -11,6 +11,8 @@ interface HeaderResumoProps {
   onAbrirModalNovo: () => void;
   onCliquePendentes: () => void;
   posicaoFilaAtual?: { indice: number; total: number } | null;
+  onRecarregar?: () => void;
+  carregando?: boolean;
 }
 
 export const HeaderResumo: React.FC<HeaderResumoProps> = ({
@@ -19,6 +21,8 @@ export const HeaderResumo: React.FC<HeaderResumoProps> = ({
   onAbrirModalNovo,
   onCliquePendentes,
   posicaoFilaAtual = null,
+  onRecarregar,
+  carregando = false,
 }) => {
   const confirmados = agendamentos.filter((a) => a.status === 'Confirmado');
   
@@ -115,6 +119,38 @@ export const HeaderResumo: React.FC<HeaderResumoProps> = ({
           >
             <span>🔗 Copiar Link Público</span>
           </button>
+
+          {/* Botão de Atualizar Manualmente sob demanda */}
+          {onRecarregar && (
+            <button
+              onClick={onRecarregar}
+              disabled={carregando}
+              title="Recarregar dados da agenda"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                backgroundColor: 'var(--bg-main)',
+                color: 'var(--text-main)',
+                border: '1.5px solid var(--border-color)',
+                padding: '11px 14px',
+                borderRadius: 'var(--radius-md)',
+                fontWeight: 600,
+                fontSize: '0.875rem',
+                cursor: carregando ? 'not-allowed' : 'pointer',
+                transition: 'all 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                if (!carregando) e.currentTarget.style.backgroundColor = 'var(--bg-card)';
+              }}
+              onMouseLeave={(e) => {
+                if (!carregando) e.currentTarget.style.backgroundColor = 'var(--bg-main)';
+              }}
+            >
+              <RotateCw size={15} style={{ animation: carregando ? 'spin 1s linear infinite' : 'none' }} />
+              <span>{carregando ? 'Atualizando...' : 'Atualizar'}</span>
+            </button>
+          )}
 
           <button
             onClick={onAbrirModalNovo}

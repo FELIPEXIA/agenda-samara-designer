@@ -138,14 +138,23 @@ function carregarDadosLocais(): StorageShape {
   };
 }
 
-function salvarDadosLocais(clientes: Cliente[], agendamentos: Agendamento[]): void {
-  // 1. Atualiza sempre a memória em primeiro lugar
+function salvarDadosLocais(clientes: Cliente[], agendamentos: Agendamento[], permiteEsvaziar = false): void {
+  // 1. Proteção de integridade: nunca esvaziar o arquivo database/data.json acidentalmente
+  if (agendamentos.length === 0 && !permiteEsvaziar) {
+    const existentes = carregarDadosLocais();
+    if (existentes.agendamentos.length > 0) {
+      console.warn('Proteção de integridade: preservando agendamentos existentes em disco contra sobreposição vazia.');
+      agendamentos = existentes.agendamentos;
+    }
+  }
+
+  // 2. Atualiza a memória em primeiro lugar
   memoryStore.clientes = clientes;
   memoryStore.agendamentos = agendamentos;
 
   const jsonStr = JSON.stringify({ clientes, agendamentos }, null, 2);
 
-  // 2. Tenta gravar no arquivo do projeto (database/data.json)
+  // 3. Grava no arquivo do projeto (database/data.json)
   try {
     const dir = path.dirname(DATA_FILE);
     if (!fs.existsSync(dir)) {
@@ -156,7 +165,7 @@ function salvarDadosLocais(clientes: Cliente[], agendamentos: Agendamento[]): vo
     // Pode falhar em ambiente serverless com sistema de arquivos somente leitura (Vercel)
   }
 
-  // 3. Grava também no TMP como fallback garantido para ambientes serverless
+  // 4. Grava também no TMP como fallback garantido para ambientes serverless
   try {
     fs.writeFileSync(TMP_FILE, jsonStr, 'utf-8');
   } catch (err) {
@@ -327,7 +336,7 @@ export async function listarAgendamentosPorData(data: string): Promise<Agendamen
     try {
       const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE to_char(a.data, 'YYYY-MM-DD') = $1 ${SQL_GROUP_BY_AGENDAMENTOS} ORDER BY a.horario_inicio ASC`;
       const res = await pool.query(sql, [dataAlvo]);
-      if (res && res.rows) {
+      if (res && res.rows && res.rows.length > 0) {
         return res.rows;
       }
     } catch (err) {
@@ -350,7 +359,7 @@ export async function listarAgendamentosPendentes(): Promise<Agendamento[]> {
     try {
       const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.status = 'Pendente' ${SQL_GROUP_BY_AGENDAMENTOS} ORDER BY a.created_at ASC, a.data ASC, a.horario_inicio ASC`;
       const res = await pool.query(sql);
-      if (res && res.rows) {
+      if (res && res.rows && res.rows.length > 0) {
         return res.rows;
       }
     } catch (err) {
@@ -639,7 +648,7 @@ export async function excluirAgendamento(id: string): Promise<boolean> {
   let excluiuLocal = false;
   if (idx !== -1) {
     dadosLocais.agendamentos.splice(idx, 1);
-    salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos);
+    salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos, true);
     excluiuLocal = true;
   }
 

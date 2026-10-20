@@ -71,56 +71,20 @@ export default function DashboardPage() {
     carregarPendentes();
   }, [carregarAgendamentos, carregarPendentes]);
 
-  // Sincronização em tempo real:
-  // 1. Polling contínuo (a cada 4 segundos)
-  // 2. Revalidate on Focus & Visibility Change (quando a Samara volta ao navegador após checar WhatsApp)
-  // 3. Notificação cross-tab instantânea (BroadcastChannel + LocalStorage)
+  // Sincronização entre abas sob demanda de eventos explícitos (sem polling contínuo)
   useEffect(() => {
-    const sincronizarTudo = () => {
-      carregarAgendamentos(true);
-      carregarPendentes();
-    };
+    if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return;
 
-    // 1. Polling a cada 4 segundos
-    const intervalId = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        sincronizarTudo();
-      }
-    }, 4000);
-
-    // 2. Revalidação ao focar na janela / aba
-    const handleRevalidate = () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
-        sincronizarTudo();
+    const channel = new BroadcastChannel('agenda_samara_sync_channel');
+    channel.onmessage = (event) => {
+      if (event.data?.type === 'NOVO_AGENDAMENTO') {
+        carregarPendentes();
+        carregarAgendamentos(true);
       }
     };
-    window.addEventListener('focus', handleRevalidate);
-    document.addEventListener('visibilitychange', handleRevalidate);
-
-    // 3. Sincronização entre abas
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'agenda_samara_sync') {
-        sincronizarTudo();
-      }
-    };
-    window.addEventListener('storage', handleStorage);
-
-    let channel: BroadcastChannel | null = null;
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      channel = new BroadcastChannel('agenda_samara_sync_channel');
-      channel.onmessage = () => {
-        sincronizarTudo();
-      };
-    }
 
     return () => {
-      clearInterval(intervalId);
-      window.removeEventListener('focus', handleRevalidate);
-      document.removeEventListener('visibilitychange', handleRevalidate);
-      window.removeEventListener('storage', handleStorage);
-      if (channel) {
-        channel.close();
-      }
+      channel.close();
     };
   }, [carregarAgendamentos, carregarPendentes]);
 
@@ -278,6 +242,11 @@ export default function DashboardPage() {
         onAbrirModalNovo={() => setModalNovoAberto(true)}
         onCliquePendentes={handleCliqueCardPendentes}
         posicaoFilaAtual={posicaoFila}
+        onRecarregar={() => {
+          carregarAgendamentos();
+          carregarPendentes();
+        }}
+        carregando={carregando}
       />
 
       {/* Navegador de Data */}

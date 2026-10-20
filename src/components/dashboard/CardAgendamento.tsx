@@ -1,12 +1,24 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Clock, Phone, Sparkles, Check, X, AlertTriangle, FileText, Trash2 } from 'lucide-react';
+import {
+  Clock,
+  Sparkles,
+  Check,
+  X,
+  FileText,
+  Trash2,
+  MessageCircle,
+  RotateCcw,
+} from 'lucide-react';
 import { Agendamento, StatusAgendamento } from '@/types';
-import { formatarMoeda, formatarTelefone } from '@/lib/formatters';
-import { criarLinkAprovacaoSamara, criarLinkRecusaSamara } from '@/lib/whatsapp';
+import { formatarMoeda } from '@/lib/formatters';
+import {
+  criarLinkAprovacaoSamara,
+  criarLinkRecusaSamara,
+  criarLinkWhatsApp,
+} from '@/lib/whatsapp';
 import { BadgeStatus } from '../ui/BadgeStatus';
-import { BotaoWhatsapp } from '../ui/BotaoWhatsapp';
 import { ClienteDestaque } from '../ui/ClienteDestaque';
 
 interface CardAgendamentoProps {
@@ -25,7 +37,7 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
   const [atualizando, setAtualizando] = useState(false);
   const [excluindo, setExcluindo] = useState(false);
 
-  // Bordas e destaques baseados no status
+  // Bordas baseadas no status
   const coresBordaPorStatus: Record<StatusAgendamento, string> = {
     Confirmado: 'var(--status-confirmado)',
     Pendente: 'var(--status-pendente)',
@@ -33,6 +45,7 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
     Concluido: '#9ca3af',
   };
 
+  // Alteração genérica de status
   const handleStatusChange = async (novoStatus: StatusAgendamento) => {
     if (agendamento.status === novoStatus || atualizando) return;
     setAtualizando(true);
@@ -43,10 +56,82 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
     }
   };
 
+  // 1. CONFIRMAR SOLICITAÇÃO PENDENTE
+  const handleConfirmar = async () => {
+    if (atualizando) return;
+    setAtualizando(true);
+    try {
+      await onAtualizarStatus(agendamento.id, 'Confirmado');
+      const link = criarLinkAprovacaoSamara({
+        clienteNome: agendamento.cliente_nome,
+        clienteTelefone: agendamento.cliente_telefone,
+        data: agendamento.data,
+        horarioInicio: agendamento.horario_inicio.substring(0, 5),
+        horarioFim: agendamento.horario_fim.substring(0, 5),
+        servicosTexto: agendamento.lista_servicos || 'Procedimentos',
+        valorTotal: Number(agendamento.valor_total || 0),
+      });
+      const confirmarWhats = window.confirm(
+        '✅ Agendamento CONFIRMADO com sucesso!\n\nDeseja abrir o WhatsApp para enviar a confirmação para a cliente agora?'
+      );
+      if (confirmarWhats) {
+        window.open(link, '_blank');
+      }
+    } finally {
+      setAtualizando(false);
+    }
+  };
+
+  // 2. REJEITAR SOLICITAÇÃO PENDENTE (Substitui o botão de status antigo)
+  const handleRejeitar = async () => {
+    if (atualizando) return;
+    const confirmarRecusa = window.confirm(
+      `Deseja realmente rejeitar a solicitação de "${agendamento.cliente_nome}"?\n\nO horário ficará liberado na agenda e você poderá sugerir um novo horário à cliente via WhatsApp.`
+    );
+    if (!confirmarRecusa) return;
+
+    setAtualizando(true);
+    try {
+      await onAtualizarStatus(agendamento.id, 'Cancelado');
+      const link = criarLinkRecusaSamara({
+        clienteNome: agendamento.cliente_nome,
+        clienteTelefone: agendamento.cliente_telefone,
+        data: agendamento.data,
+        horarioInicio: agendamento.horario_inicio.substring(0, 5),
+        servicosTexto: agendamento.lista_servicos || 'Procedimentos',
+      });
+      const avisarWhats = window.confirm(
+        '❌ Solicitação rejeitada e horário liberado!\n\nDeseja abrir o WhatsApp para avisar a cliente com o template carinhoso de reagendamento?'
+      );
+      if (avisarWhats) {
+        window.open(link, '_blank');
+      }
+    } finally {
+      setAtualizando(false);
+    }
+  };
+
+  // 3. CANCELAR AGENDAMENTO QUE ESTAVA CONFIRMADO
+  const handleCancelar = async () => {
+    if (atualizando) return;
+    const confirmou = window.confirm(
+      `Deseja cancelar o agendamento de "${agendamento.cliente_nome}"?\n\nO horário ficará livre para novos atendimentos na agenda.`
+    );
+    if (!confirmou) return;
+
+    setAtualizando(true);
+    try {
+      await onAtualizarStatus(agendamento.id, 'Cancelado');
+    } finally {
+      setAtualizando(false);
+    }
+  };
+
+  // 4. EXCLUIR PERMANENTEMENTE DO BANCO / TELA
   const handleExcluir = async () => {
     if (!onExcluir || excluindo) return;
     const confirmou = window.confirm(
-      `Deseja realmente excluir permanentemente o agendamento de "${agendamento.cliente_nome}"?\n\nEsta ação liberará o horário na agenda e removerá o card da interface.`
+      `Deseja realmente excluir permanentemente o registro de "${agendamento.cliente_nome}"?\n\nEsta ação removerá o card da interface definitivamente.`
     );
     if (!confirmou) return;
     setExcluindo(true);
@@ -56,6 +141,26 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
       setExcluindo(false);
     }
   };
+
+  // Template WhatsApp de Confirmação (Para agendamentos Confirmados)
+  const linkConfirmacao = criarLinkWhatsApp({
+    clienteNome: agendamento.cliente_nome,
+    clienteTelefone: agendamento.cliente_telefone,
+    data: agendamento.data,
+    horarioInicio: agendamento.horario_inicio.substring(0, 5),
+    horarioFim: agendamento.horario_fim.substring(0, 5),
+    servicosTexto: agendamento.lista_servicos || 'Procedimentos',
+    valorTotal: Number(agendamento.valor_total || 0),
+  });
+
+  // Template WhatsApp de Cancelamento/Recusa (Para agendamentos Cancelados/Rejeitados)
+  const linkRecusa = criarLinkRecusaSamara({
+    clienteNome: agendamento.cliente_nome,
+    clienteTelefone: agendamento.cliente_telefone,
+    data: agendamento.data,
+    horarioInicio: agendamento.horario_inicio.substring(0, 5),
+    servicosTexto: agendamento.lista_servicos || 'Procedimentos',
+  });
 
   return (
     <div
@@ -111,6 +216,7 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
           )}
         </div>
       )}
+
       {/* Topo do Card: Horário, Duração e Badge de Status */}
       <div
         style={{
@@ -155,7 +261,7 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
         <BadgeStatus status={agendamento.status} />
       </div>
 
-      {/* Bloco Unificado e Padronizado: Cliente Agendada */}
+      {/* Bloco Unificado: Cliente Agendada */}
       <ClienteDestaque
         nome={agendamento.cliente_nome}
         telefone={agendamento.cliente_telefone}
@@ -172,7 +278,6 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
           gap: '6px',
         }}
       >
-
         {/* Serviços */}
         <div
           style={{
@@ -210,176 +315,29 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
         )}
       </div>
 
-      {/* Painel de Aprovação Rápida (1 Clique) para Samara */}
-      {agendamento.status === 'Pendente' && (
-        <div
-          style={{
-            backgroundColor: 'var(--status-pendente-bg)',
-            border: '1.5px solid var(--status-pendente-border)',
-            borderRadius: 'var(--radius-sm)',
-            padding: '12px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '10px',
-            marginTop: '2px',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-            <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: 'var(--status-pendente)' }}>
-              ⏳ AGUARDANDO SUA APROVAÇÃO
-            </span>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-              Autoatendimento da cliente
-            </span>
-          </div>
-
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={async () => {
-                await handleStatusChange('Confirmado');
-                const link = criarLinkAprovacaoSamara({
-                  clienteNome: agendamento.cliente_nome,
-                  clienteTelefone: agendamento.cliente_telefone,
-                  data: agendamento.data,
-                  horarioInicio: agendamento.horario_inicio.substring(0, 5),
-                  horarioFim: agendamento.horario_fim.substring(0, 5),
-                  servicosTexto: agendamento.lista_servicos || 'Procedimentos',
-                  valorTotal: Number(agendamento.valor_total || 0),
-                });
-                const confirmarWhats = window.confirm(
-                  '✅ Agendamento APROVADO com sucesso!\n\nDeseja enviar a mensagem de confirmação para a cliente no WhatsApp agora?'
-                );
-                if (confirmarWhats) {
-                  window.open(link, '_blank');
-                }
-              }}
-              disabled={atualizando}
-              style={{
-                flex: 1,
-                minWidth: '160px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '6px',
-                backgroundColor: 'var(--status-confirmado)',
-                color: '#ffffff',
-                padding: '10px 14px',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '0.875rem',
-                fontWeight: 700,
-                border: 'none',
-                cursor: 'pointer',
-                boxShadow: '0 2px 6px rgba(16, 185, 129, 0.25)',
-              }}
-            >
-              <Check size={16} />
-              <span>Aprovar Agendamento</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={async () => {
-                const confirmarRecusa = window.confirm(
-                  'Deseja recusar este agendamento? O horário ficará liberado na agenda e você poderá sugerir outro horário à cliente.'
-                );
-                if (!confirmarRecusa) return;
-                await handleStatusChange('Cancelado');
-                const link = criarLinkRecusaSamara({
-                  clienteNome: agendamento.cliente_nome,
-                  clienteTelefone: agendamento.cliente_telefone,
-                  data: agendamento.data,
-                  horarioInicio: agendamento.horario_inicio.substring(0, 5),
-                  servicosTexto: agendamento.lista_servicos || 'Procedimentos',
-                });
-                const avisarCliente = window.confirm(
-                  '❌ Agendamento recusado e horário liberado!\n\nDeseja abrir o WhatsApp para sugerir outro horário para a cliente?'
-                );
-                if (avisarCliente) {
-                  window.open(link, '_blank');
-                }
-              }}
-              disabled={atualizando}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '6px',
-                backgroundColor: '#ffffff',
-                color: 'var(--status-cancelado)',
-                border: '1px solid var(--status-cancelado-border)',
-                padding: '10px 14px',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              <X size={16} />
-              <span>Recusar / Reagendar</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Banner de Limpeza para Agendamentos Cancelados */}
+      {/* Aviso contextual para agendamentos cancelados / recusados */}
       {agendamento.status === 'Cancelado' && (
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
+            gap: '8px',
             backgroundColor: '#fef2f2',
-            border: '1.5px dashed #fca5a5',
+            border: '1px dashed #fca5a5',
             borderRadius: 'var(--radius-sm)',
-            padding: '10px 14px',
-            fontSize: '0.85rem',
+            padding: '8px 12px',
+            fontSize: '0.8125rem',
             color: '#991b1b',
-            gap: '10px',
-            flexWrap: 'wrap',
           }}
         >
-          <span>
-            ⚠️ <strong>Agendamento cancelado:</strong> Este horário está livre para novos atendimentos.
-          </span>
-          {onExcluir && (
-            <button
-              type="button"
-              onClick={handleExcluir}
-              disabled={excluindo}
-              title="Remover este card cancelado da agenda"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                backgroundColor: '#dc2626',
-                color: '#ffffff',
-                border: 'none',
-                padding: '7px 12px',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '0.8125rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                boxShadow: '0 2px 6px rgba(220, 38, 38, 0.25)',
-                transition: 'all 0.15s ease',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#b91c1c';
-                e.currentTarget.style.transform = 'translateY(-1px)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = '#dc2626';
-                e.currentTarget.style.transform = 'translateY(0)';
-              }}
-            >
-              <Trash2 size={14} />
-              <span>{excluindo ? 'Removendo...' : 'Limpar da Tela'}</span>
-            </button>
-          )}
+          <span>⚠️</span>
+          <span>Este agendamento foi cancelado / recusado. O horário está livre na agenda.</span>
         </div>
       )}
 
-      {/* Rodapé: Valor, Pagamento, Ações de Status e Botão WhatsApp */}
+      {/* ======================================================== */}
+      {/* RODAPÉ: VALOR E AÇÕES INTELIGENTES POR STATUS            */}
+      {/* ======================================================== */}
       <div
         style={{
           display: 'flex',
@@ -391,6 +349,7 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
           borderTop: '1px solid var(--border-color)',
         }}
       >
+        {/* Resumo do Valor */}
         <div>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Valor Total</span>
           <div style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--text-main)' }}>
@@ -408,150 +367,73 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
           </div>
         </div>
 
-        {/* Grupo de Ações com Alto Destaque e Área de Clique Confortável */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          {/* Botão Marcar como Confirmado */}
-          <button
-            type="button"
-            onClick={() => handleStatusChange('Confirmado')}
-            disabled={atualizando || agendamento.status === 'Confirmado'}
-            title="Marcar como Confirmado"
-            style={{
-              height: '38px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '0 12px',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              cursor: agendamento.status === 'Confirmado' ? 'default' : 'pointer',
-              border: agendamento.status === 'Confirmado' ? '1.5px solid #059669' : '1.5px solid #86efac',
-              backgroundColor: agendamento.status === 'Confirmado' ? '#10b981' : '#f0fdf4',
-              color: agendamento.status === 'Confirmado' ? '#ffffff' : '#15803d',
-              boxShadow: agendamento.status === 'Confirmado' ? '0 2px 8px rgba(16, 185, 129, 0.3)' : 'none',
-              transition: 'all 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              if (agendamento.status !== 'Confirmado' && !atualizando) {
-                e.currentTarget.style.backgroundColor = '#dcfce7';
-                e.currentTarget.style.transform = 'translateY(-1px)';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (agendamento.status !== 'Confirmado') {
-                e.currentTarget.style.backgroundColor = '#f0fdf4';
-                e.currentTarget.style.transform = 'translateY(0)';
-              }
-            }}
-          >
-            <Check size={16} strokeWidth={2.5} />
-            <span>Confirmar</span>
-          </button>
-
-          {/* Botão Marcar como Pendente */}
-          <button
-            type="button"
-            onClick={() => handleStatusChange('Pendente')}
-            disabled={atualizando || agendamento.status === 'Pendente'}
-            title="Marcar como Pendente"
-            style={{
-              height: '38px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '0 12px',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              cursor: agendamento.status === 'Pendente' ? 'default' : 'pointer',
-              border: agendamento.status === 'Pendente' ? '1.5px solid #b45309' : '1.5px solid #fde68a',
-              backgroundColor: agendamento.status === 'Pendente' ? '#d97706' : '#fffbeb',
-              color: agendamento.status === 'Pendente' ? '#ffffff' : '#b45309',
-              boxShadow: agendamento.status === 'Pendente' ? '0 2px 8px rgba(217, 119, 6, 0.3)' : 'none',
-              transition: 'all 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              if (agendamento.status !== 'Pendente' && !atualizando) {
-                e.currentTarget.style.backgroundColor = '#fef3c7';
-                e.currentTarget.style.transform = 'translateY(-1px)';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (agendamento.status !== 'Pendente') {
-                e.currentTarget.style.backgroundColor = '#fffbeb';
-                e.currentTarget.style.transform = 'translateY(0)';
-              }
-            }}
-          >
-            <AlertTriangle size={15} strokeWidth={2.2} />
-            <span>Pendente</span>
-          </button>
-
-          {/* Botão Marcar como Cancelar */}
-          <button
-            type="button"
-            onClick={() => handleStatusChange('Cancelado')}
-            disabled={atualizando || agendamento.status === 'Cancelado'}
-            title="Cancelar Agendamento"
-            style={{
-              height: '38px',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '0 12px',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: '0.8125rem',
-              fontWeight: 600,
-              cursor: agendamento.status === 'Cancelado' ? 'default' : 'pointer',
-              border: agendamento.status === 'Cancelado' ? '1.5px solid #dc2626' : '1.5px solid #fecaca',
-              backgroundColor: agendamento.status === 'Cancelado' ? '#ef4444' : '#fef2f2',
-              color: agendamento.status === 'Cancelado' ? '#ffffff' : '#b91c1c',
-              boxShadow: agendamento.status === 'Cancelado' ? '0 2px 8px rgba(239, 68, 68, 0.3)' : 'none',
-              transition: 'all 0.15s ease',
-            }}
-            onMouseEnter={(e) => {
-              if (agendamento.status !== 'Cancelado' && !atualizando) {
-                e.currentTarget.style.backgroundColor = '#fee2e2';
-                e.currentTarget.style.transform = 'translateY(-1px)';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (agendamento.status !== 'Cancelado') {
-                e.currentTarget.style.backgroundColor = '#fef2f2';
-                e.currentTarget.style.transform = 'translateY(0)';
-              }
-            }}
-          >
-            <X size={16} strokeWidth={2.5} />
-            <span>Cancelar</span>
-          </button>
-
-          {/* Botão Excluir Agendamento */}
-          {onExcluir && (
+        {/* ====================================================== */}
+        {/* 1. SE STATUS === 'Pendente': CONFIRMAR OU REJEITAR     */}
+        {/* ====================================================== */}
+        {agendamento.status === 'Pendente' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {/* Botão Confirmar (Verde) */}
             <button
               type="button"
-              onClick={handleExcluir}
-              disabled={excluindo}
-              title="Excluir este agendamento permanentemente da agenda"
+              onClick={handleConfirmar}
+              disabled={atualizando}
+              title="Aprovar e confirmar este agendamento"
               style={{
                 height: '38px',
                 display: 'inline-flex',
                 alignItems: 'center',
+                justifyContent: 'center',
                 gap: '6px',
-                padding: '0 12px',
+                padding: '0 18px',
                 borderRadius: 'var(--radius-sm)',
-                fontSize: '0.8125rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: '#ffffff',
-                color: '#dc2626',
-                border: '1.5px solid #fca5a5',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                fontSize: '0.875rem',
+                fontWeight: 700,
+                backgroundColor: 'var(--status-confirmado)',
+                color: '#ffffff',
+                border: 'none',
+                cursor: atualizando ? 'not-allowed' : 'pointer',
+                boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
                 transition: 'all 0.15s ease',
               }}
               onMouseEnter={(e) => {
-                if (!excluindo) {
+                if (!atualizando) {
+                  e.currentTarget.style.backgroundColor = '#047857';
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--status-confirmado)';
+                e.currentTarget.style.transform = 'translateY(0)';
+              }}
+            >
+              <Check size={16} strokeWidth={2.5} />
+              <span>{atualizando ? 'Confirmando...' : 'Confirmar'}</span>
+            </button>
+
+            {/* Botão Rejeitar (Vermelho/Alerta) */}
+            <button
+              type="button"
+              onClick={handleRejeitar}
+              disabled={atualizando}
+              title="Recusar a solicitação inicial da cliente"
+              style={{
+                height: '38px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                padding: '0 16px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.875rem',
+                fontWeight: 600,
+                backgroundColor: '#ffffff',
+                color: '#dc2626',
+                border: '1.5px solid #fca5a5',
+                cursor: atualizando ? 'not-allowed' : 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                if (!atualizando) {
                   e.currentTarget.style.backgroundColor = '#fee2e2';
                   e.currentTarget.style.borderColor = '#ef4444';
                   e.currentTarget.style.transform = 'translateY(-1px)';
@@ -563,22 +445,308 @@ export const CardAgendamento: React.FC<CardAgendamentoProps> = ({
                 e.currentTarget.style.transform = 'translateY(0)';
               }}
             >
-              <Trash2 size={15} />
-              <span>{excluindo ? 'Excluindo...' : 'Excluir'}</span>
+              <X size={16} strokeWidth={2.5} />
+              <span>Rejeitar</span>
             </button>
-          )}
+          </div>
+        )}
 
-          {/* Atalho WhatsApp com Estilo Destacado */}
-          <BotaoWhatsapp
-            clienteNome={agendamento.cliente_nome}
-            clienteTelefone={agendamento.cliente_telefone}
-            data={agendamento.data}
-            horarioInicio={agendamento.horario_inicio.substring(0, 5)}
-            horarioFim={agendamento.horario_fim.substring(0, 5)}
-            servicosTexto={agendamento.lista_servicos || 'Procedimento com Samara'}
-            valorTotal={Number(agendamento.valor_total || 0)}
-          />
-        </div>
+        {/* ====================================================== */}
+        {/* 2. SE STATUS === 'Confirmado': CANCELAR, EXCLUIR, WPP */}
+        {/* ====================================================== */}
+        {agendamento.status === 'Confirmado' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {/* Avisar no WhatsApp (Template de Confirmação) */}
+            <a
+              href={linkConfirmacao}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Enviar confirmação oficial no WhatsApp da cliente"
+              style={{
+                height: '38px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                backgroundColor: '#25D366',
+                color: '#ffffff',
+                padding: '0 14px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                textDecoration: 'none',
+                boxShadow: '0 2px 6px rgba(37, 211, 102, 0.25)',
+                transition: 'transform 0.15s ease, background-color 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-1px)';
+                e.currentTarget.style.backgroundColor = '#20bd5a';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.backgroundColor = '#25D366';
+              }}
+            >
+              <MessageCircle size={16} />
+              <span>Avisar no WhatsApp</span>
+            </a>
+
+            {/* Cancelar Agendamento */}
+            <button
+              type="button"
+              onClick={handleCancelar}
+              disabled={atualizando}
+              title="Cancelar este agendamento"
+              style={{
+                height: '38px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                padding: '0 12px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                border: '1.5px solid #fecaca',
+                backgroundColor: '#fef2f2',
+                color: '#b91c1c',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                if (!atualizando) {
+                  e.currentTarget.style.backgroundColor = '#fee2e2';
+                  e.currentTarget.style.borderColor = '#ef4444';
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#fef2f2';
+                e.currentTarget.style.borderColor = '#fecaca';
+                e.currentTarget.style.transform = 'translateY(0)';
+              }}
+            >
+              <X size={15} strokeWidth={2.2} />
+              <span>Cancelar</span>
+            </button>
+
+            {/* Excluir Agendamento */}
+            {onExcluir && (
+              <button
+                type="button"
+                onClick={handleExcluir}
+                disabled={excluindo}
+                title="Excluir este agendamento permanentemente da agenda"
+                style={{
+                  height: '38px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '0 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '0.8125rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: '#ffffff',
+                  color: 'var(--text-muted)',
+                  border: '1px solid var(--border-color)',
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (!excluindo) {
+                    e.currentTarget.style.backgroundColor = '#fee2e2';
+                    e.currentTarget.style.color = '#dc2626';
+                    e.currentTarget.style.borderColor = '#fca5a5';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#ffffff';
+                  e.currentTarget.style.color = 'var(--text-muted)';
+                  e.currentTarget.style.borderColor = 'var(--border-color)';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
+              >
+                <Trash2 size={15} />
+                <span>{excluindo ? 'Excluindo...' : 'Excluir'}</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ====================================================== */}
+        {/* 3. SE STATUS === 'Cancelado': EXCLUIR E WPP RECUSA     */}
+        {/* ====================================================== */}
+        {agendamento.status === 'Cancelado' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            {/* Avisar Recusa/Remarcação no WhatsApp */}
+            <a
+              href={linkRecusa}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Enviar mensagem carinhosa de recusa e sugestão de novo horário"
+              style={{
+                height: '38px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                backgroundColor: '#25D366',
+                color: '#ffffff',
+                padding: '0 14px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                textDecoration: 'none',
+                boxShadow: '0 2px 6px rgba(37, 211, 102, 0.25)',
+                transition: 'transform 0.15s ease, background-color 0.2s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-1px)';
+                e.currentTarget.style.backgroundColor = '#20bd5a';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.backgroundColor = '#25D366';
+              }}
+            >
+              <MessageCircle size={16} />
+              <span>Avisar no WhatsApp</span>
+            </a>
+
+            {/* Excluir da Tela (Ação principal para sumir com o card) */}
+            {onExcluir && (
+              <button
+                type="button"
+                onClick={handleExcluir}
+                disabled={excluindo}
+                title="Excluir e remover permanentemente este registro da tela"
+                style={{
+                  height: '38px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '0 16px',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '0.8125rem',
+                  fontWeight: 700,
+                  backgroundColor: '#dc2626',
+                  color: '#ffffff',
+                  border: 'none',
+                  cursor: excluindo ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 2px 8px rgba(220, 38, 38, 0.25)',
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  if (!excluindo) {
+                    e.currentTarget.style.backgroundColor = '#b91c1c';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#dc2626';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
+              >
+                <Trash2 size={15} />
+                <span>{excluindo ? 'Removendo...' : 'Excluir da Tela'}</span>
+              </button>
+            )}
+
+            {/* Reativar (caso cancelado por engano) */}
+            <button
+              type="button"
+              onClick={() => handleStatusChange('Confirmado')}
+              disabled={atualizando}
+              title="Restaurar este agendamento para confirmado"
+              style={{
+                height: '38px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '5px',
+                padding: '0 10px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                backgroundColor: '#ffffff',
+                color: 'var(--text-muted)',
+                border: '1px solid var(--border-color)',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--bg-main)';
+                e.currentTarget.style.color = 'var(--text-main)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#ffffff';
+                e.currentTarget.style.color = 'var(--text-muted)';
+              }}
+            >
+              <RotateCcw size={13} />
+              <span>Reativar</span>
+            </button>
+          </div>
+        )}
+
+        {/* ====================================================== */}
+        {/* 4. SE STATUS === 'Concluido': EXCLUIR E WPP            */}
+        {/* ====================================================== */}
+        {agendamento.status === 'Concluido' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <a
+              href={linkConfirmacao}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                height: '38px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                backgroundColor: '#25D366',
+                color: '#ffffff',
+                padding: '0 14px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                textDecoration: 'none',
+              }}
+            >
+              <MessageCircle size={16} />
+              <span>Avisar no WhatsApp</span>
+            </a>
+
+            {onExcluir && (
+              <button
+                type="button"
+                onClick={handleExcluir}
+                disabled={excluindo}
+                style={{
+                  height: '38px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '0 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '0.8125rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  backgroundColor: '#ffffff',
+                  color: 'var(--text-muted)',
+                  border: '1px solid var(--border-color)',
+                }}
+              >
+                <Trash2 size={15} />
+                <span>Excluir</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -160,13 +160,14 @@ export async function obterOuCriarCliente(dados: {
 }
 
 export async function listarAgendamentosPorData(data: string): Promise<Agendamento[]> {
+  const dataAlvo = data.substring(0, 10);
   if (process.env.DATABASE_URL) {
     try {
       const res = await pool.query(
         `SELECT * FROM vw_agendamentos_dashboard 
-         WHERE data = $1 
+         WHERE to_char(data, 'YYYY-MM-DD') = $1 
          ORDER BY horario_inicio ASC`,
-        [data]
+        [dataAlvo]
       );
       return res.rows;
     } catch (err) {
@@ -175,7 +176,7 @@ export async function listarAgendamentosPorData(data: string): Promise<Agendamen
   }
 
   return mockAgendamentos
-    .filter((a) => a.data === data)
+    .filter((a) => (a.data ? a.data.substring(0, 10) === dataAlvo : false))
     .sort((a, b) => a.horario_inicio.localeCompare(b.horario_inicio));
 }
 
@@ -337,12 +338,15 @@ export async function atualizarStatusAgendamento(
 ): Promise<Agendamento | null> {
   if (process.env.DATABASE_URL) {
     try {
-      const res = await pool.query(
+      await pool.query(
         `UPDATE agendamentos 
          SET status = $1, updated_at = CURRENT_TIMESTAMP 
-         WHERE id = $2 
-         RETURNING *`,
+         WHERE id = $2`,
         [novoStatus, id]
+      );
+      const res = await pool.query(
+        `SELECT * FROM vw_agendamentos_dashboard WHERE id = $1 LIMIT 1`,
+        [id]
       );
       if (res.rows[0]) {
         return res.rows[0];

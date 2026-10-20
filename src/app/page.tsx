@@ -171,28 +171,17 @@ export default function DashboardPage() {
       });
       const json = await res.json();
       if (json.success) {
-        // Atualiza no dia atual
+        // Atualiza no dia atual mantendo o card visível na tela com o novo status
         setAgendamentos((prev) =>
-          prev.map((item) => (item.id === id ? { ...item, status: novoStatus } : item))
+          prev.map((item) =>
+            item.id === id ? { ...item, ...(json.data || {}), status: novoStatus } : item
+          )
         );
 
-        // Atualiza a fila geral de pendentes
-        setAgendamentosPendentes((prev) => {
-          const restantes = prev.filter((item) => item.id !== id);
-          if (restantes.length === 0) {
-            // Regra de Retorno ao Normal: Fila zerada!
-            setIndiceFilaPendente(-1);
-            setAgendamentoDestacadoId(null);
-          } else if (agendamentoDestacadoId === id) {
-            // Se o item respondido era o focado, foca no próximo da fila
-            const proximo = restantes[0];
-            setAgendamentoDestacadoId(proximo.id);
-            if (proximo.data !== dataSelecionada) {
-              setDataSelecionada(proximo.data);
-            }
-          }
-          return restantes;
-        });
+        // Atualiza a fila geral de pendentes e remove o destaque FIFO sem trocar a data da tela
+        setAgendamentosPendentes((prev) => prev.filter((item) => item.id !== id));
+        setIndiceFilaPendente(-1);
+        setAgendamentoDestacadoId(null);
 
         // Sincroniza estado com a API e notifica abas
         carregarPendentes();

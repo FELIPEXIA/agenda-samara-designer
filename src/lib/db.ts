@@ -54,99 +54,23 @@ let mockServicos: Servico[] = [
   { id: 'srv-24', nome_servico: 'Manutenção e Henna', categoria: 'Combos Gel', valor_base: 125.0, duracao_minutos: 240, ativo: true },
 ];
 
-let mockClientes: Cliente[] = [
-  { id: 'cli-1', nome: 'Ana Clara Souza', telefone: '27999991111', observacoes: 'Unhas amendoadas, cutícula fina' },
-  { id: 'cli-2', nome: 'Juliana Mendes', telefone: '27988882222', observacoes: 'Alérgica a produtos com perfume forte' },
-  { id: 'cli-3', nome: 'Camila Rodrigues', telefone: '27977773333', observacoes: 'Cliente pontual, prefere tons neutros' },
-  { id: 'cli-4', nome: 'Beatriz Lima', telefone: '27966664444', observacoes: 'Faz manutenção a cada 20 dias' },
-];
+// Armazenamento em memória para clientes e agendamentos reais (sem dados fictícios ou recriação automática).
+// Usamos globalThis para preservar agendamentos reais e deleções durante Hot Module Replacement (HMR) em desenvolvimento.
+const globalStore = globalThis as unknown as {
+  mockClientes?: Cliente[];
+  mockAgendamentos?: Agendamento[];
+};
 
-// Gera data de hoje no formato YYYY-MM-DD
-const hojeISO = new Date().toISOString().split('T')[0];
+if (!globalStore.mockClientes) {
+  globalStore.mockClientes = [];
+}
 
-const amanhaDate = new Date();
-amanhaDate.setDate(amanhaDate.getDate() + 1);
-const amanhaISO = amanhaDate.toISOString().split('T')[0];
+if (!globalStore.mockAgendamentos) {
+  globalStore.mockAgendamentos = [];
+}
 
-let mockAgendamentos: Agendamento[] = [
-  {
-    id: 'ag-1',
-    id_cliente: 'cli-1',
-    cliente_nome: 'Ana Clara Souza',
-    cliente_telefone: '27999991111',
-    data: hojeISO,
-    horario_inicio: '08:30',
-    horario_fim: '11:30',
-    duracao_total_minutos: 180,
-    valor_total: 90.0,
-    forma_pagamento: 'Pix',
-    status: 'Confirmado',
-    lista_servicos: 'Manutenção',
-    observacoes: 'Trazer referência de nail art minimalista',
-  },
-  {
-    id: 'ag-2',
-    id_cliente: 'cli-2',
-    cliente_nome: 'Juliana Mendes',
-    cliente_telefone: '27988882222',
-    data: hojeISO,
-    horario_inicio: '11:30',
-    horario_fim: '12:30',
-    duracao_total_minutos: 60,
-    valor_total: 35.0,
-    forma_pagamento: 'A_Definir',
-    status: 'Pendente',
-    lista_servicos: 'Henna',
-    observacoes: 'Aguardando confirmação de horário via WhatsApp',
-    created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
-  },
-  {
-    id: 'ag-3',
-    id_cliente: 'cli-3',
-    cliente_nome: 'Camila Rodrigues',
-    cliente_telefone: '27977773333',
-    data: hojeISO,
-    horario_inicio: '13:30',
-    horario_fim: '15:30',
-    duracao_total_minutos: 120,
-    valor_total: 45.0,
-    forma_pagamento: 'Cartao_Credito',
-    status: 'Confirmado',
-    lista_servicos: 'Pé e Mão',
-    observacoes: 'Esmalte vermelho clássico',
-  },
-  {
-    id: 'ag-4',
-    id_cliente: 'cli-4',
-    cliente_nome: 'Beatriz Lima',
-    cliente_telefone: '27966664444',
-    data: hojeISO,
-    horario_inicio: '16:00',
-    horario_fim: '19:30',
-    duracao_total_minutos: 210,
-    valor_total: 120.0,
-    forma_pagamento: 'Pix',
-    status: 'Cancelado',
-    lista_servicos: 'Unha de Gel',
-    observacoes: 'Desmarcou por imprevisto no trabalho',
-  },
-  {
-    id: 'ag-5',
-    id_cliente: 'cli-5',
-    cliente_nome: 'Larissa Carvalho',
-    cliente_telefone: '27999887766',
-    data: amanhaISO,
-    horario_inicio: '14:00',
-    horario_fim: '15:30',
-    duracao_total_minutos: 90,
-    valor_total: 65.0,
-    forma_pagamento: 'Pix',
-    status: 'Pendente',
-    lista_servicos: 'Mão e Henna',
-    observacoes: 'Solicitou atendimento pelo link público de autoatendimento',
-    created_at: new Date(Date.now() - 1 * 3600 * 1000).toISOString(),
-  },
-];
+const mockClientes: Cliente[] = globalStore.mockClientes;
+const mockAgendamentos: Agendamento[] = globalStore.mockAgendamentos;
 
 // ==============================================================
 // FUNÇÕES DE ACESSO A DADOS (HÍBRIDO POSTGRESQL + MEMORY FALLBACK)

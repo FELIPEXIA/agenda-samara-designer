@@ -44,9 +44,3 @@ INSERT INTO servicos (nome_servico, categoria, valor_base, duracao_minutos) VALU
 ('Manutenção e Henna', 'Combos Gel', 125.00, 240)
 ON CONFLICT DO NOTHING;
 
--- Inserir Clientes Exemplo para Teste Inicial
-INSERT INTO clientes (nome, telefone, observacoes) VALUES
-('Ana Clara Souza', '5511999991111', 'Prefere esmalte tons nudes, cutícula fina'),
-('Juliana Mendes', '5511988882222', 'Alérgica a produtos com perfume forte'),
-('Camila Rodrigues', '5511977773333', 'Cliente pontual, gosta de café sem açúcar')
-ON CONFLICT DO NOTHING;

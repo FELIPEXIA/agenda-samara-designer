@@ -1,15 +1,18 @@
 import { Pool } from 'pg';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { Agendamento, Cliente, Servico, CriarAgendamentoDTO, StatusAgendamento } from '@/types';
 import { calcularHorarioFim, haConflitoDeHorario } from './time-calc';
 
-// Configuração do pool de conexões PostgreSQL
+// Configuração do pool de conexões PostgreSQL com timeout resiliente
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')
     ? { rejectUnauthorized: false }
     : false,
+  connectionTimeoutMillis: 4000,
+  idleTimeoutMillis: 10000,
 });
 
 // ==============================================================
@@ -58,40 +61,111 @@ export const catalogoServicos: Servico[] = [
 export const mockServicos = catalogoServicos; // Retrocompatibilidade
 
 // ==============================================================
-// PERSISTÊNCIA EM ARQUIVO LOCAL (database/data.json)
-// Fonte de dados local garantida e segura contra perdas
+// PERSISTÊNCIA MULTI-CAMADA RESILIENTE (DISCO + TMP + MEMÓRIA)
 // ==============================================================
 const DATA_FILE = path.join(process.cwd(), 'database', 'data.json');
+const TMP_FILE = path.join(os.tmpdir(), 'agenda_samara_data.json');
 
-function carregarDadosLocais(): { clientes: Cliente[]; agendamentos: Agendamento[] } {
+interface StorageShape {
+  clientes: Cliente[];
+  agendamentos: Agendamento[];
+}
+
+// Memória persistente global da instância do Node.js
+const globalObj = globalThis as unknown as {
+  __agendaSamaraStore?: StorageShape;
+};
+
+if (!globalObj.__agendaSamaraStore) {
+  globalObj.__agendaSamaraStore = {
+    clientes: [],
+    agendamentos: [],
+  };
+}
+
+const memoryStore = globalObj.__agendaSamaraStore;
+
+function mesclarNaMemoria(clientes: Cliente[], agendamentos: Agendamento[]) {
+  if (Array.isArray(clientes)) {
+    for (const c of clientes) {
+      if (!memoryStore.clientes.some((x) => x.id === c.id || (x.telefone && x.telefone === c.telefone))) {
+        memoryStore.clientes.push(c);
+      }
+    }
+  }
+  if (Array.isArray(agendamentos)) {
+    for (const a of agendamentos) {
+      const idx = memoryStore.agendamentos.findIndex((x) => x.id === a.id);
+      if (idx >= 0) {
+        memoryStore.agendamentos[idx] = a;
+      } else {
+        memoryStore.agendamentos.push(a);
+      }
+    }
+  }
+}
+
+function carregarDadosLocais(): StorageShape {
+  // 1. Tenta ler de database/data.json do projeto
   try {
     if (fs.existsSync(DATA_FILE)) {
       const conteudo = fs.readFileSync(DATA_FILE, 'utf-8');
       if (conteudo && conteudo.trim()) {
         const parsed = JSON.parse(conteudo);
-        return {
-          clientes: Array.isArray(parsed.clientes) ? parsed.clientes : [],
-          agendamentos: Array.isArray(parsed.agendamentos) ? parsed.agendamentos : [],
-        };
+        mesclarNaMemoria(parsed.clientes || [], parsed.agendamentos || []);
       }
     }
   } catch (err) {
-    console.error('Erro ao ler database/data.json:', err);
+    // Ignora se não for legível
   }
-  return { clientes: [], agendamentos: [] };
+
+  // 2. Tenta ler de TMP_FILE (útil em ambientes serverless como Vercel)
+  try {
+    if (fs.existsSync(TMP_FILE)) {
+      const conteudoTmp = fs.readFileSync(TMP_FILE, 'utf-8');
+      if (conteudoTmp && conteudoTmp.trim()) {
+        const parsedTmp = JSON.parse(conteudoTmp);
+        mesclarNaMemoria(parsedTmp.clientes || [], parsedTmp.agendamentos || []);
+      }
+    }
+  } catch (err) {
+    // Ignora
+  }
+
+  return {
+    clientes: [...memoryStore.clientes],
+    agendamentos: [...memoryStore.agendamentos],
+  };
 }
 
 function salvarDadosLocais(clientes: Cliente[], agendamentos: Agendamento[]): void {
+  // 1. Atualiza sempre a memória em primeiro lugar
+  memoryStore.clientes = clientes;
+  memoryStore.agendamentos = agendamentos;
+
+  const jsonStr = JSON.stringify({ clientes, agendamentos }, null, 2);
+
+  // 2. Tenta gravar no arquivo do projeto (database/data.json)
   try {
     const dir = path.dirname(DATA_FILE);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ clientes, agendamentos }, null, 2), 'utf-8');
+    fs.writeFileSync(DATA_FILE, jsonStr, 'utf-8');
   } catch (err) {
-    console.error('Erro ao salvar database/data.json:', err);
+    // Pode falhar em ambiente serverless com sistema de arquivos somente leitura (Vercel)
+  }
+
+  // 3. Grava também no TMP como fallback garantido para ambientes serverless
+  try {
+    fs.writeFileSync(TMP_FILE, jsonStr, 'utf-8');
+  } catch (err) {
+    // Ignora
   }
 }
+
+// Inicializa a carga dos dados
+carregarDadosLocais();
 
 // ==============================================================
 // CONSULTA SQL ROBUSTA E COMPATÍVEL
@@ -197,7 +271,7 @@ export async function obterOuCriarCliente(dados: {
     try {
       // Procura por ID se for UUID válido
       if (dados.id && dados.id.length >= 32) {
-        const res = await pool.query('SELECT id, nome, telefone, observacoes FROM clientes WHERE id = $1', [dados.id]);
+        const res = await pool.query('SELECT id, nome, telefone, observacoes FROM clientes WHERE id::text = $1', [dados.id]);
         if (res.rows[0]) return res.rows[0];
       }
       // Procura por telefone antes de criar
@@ -304,7 +378,7 @@ export async function listarAgendamentosPendentes(): Promise<Agendamento[]> {
 export async function obterAgendamentoPorId(id: string): Promise<Agendamento | null> {
   if (process.env.DATABASE_URL) {
     try {
-      const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.id = $1 ${SQL_GROUP_BY_AGENDAMENTOS} LIMIT 1`;
+      const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.id::text = $1 ${SQL_GROUP_BY_AGENDAMENTOS} LIMIT 1`;
       const res = await pool.query(sql, [id]);
       if (res && res.rows[0]) {
         return res.rows[0];
@@ -320,7 +394,7 @@ export async function obterAgendamentoPorId(id: string): Promise<Agendamento | n
 }
 
 // ==============================================================
-// AGENDAMENTOS: CRIAR (COM PERSISTÊNCIA DUAL POSTGRESQL + DISCO)
+// AGENDAMENTOS: CRIAR (COM PERSISTÊNCIA DUAL POSTGRESQL + MULTI-CAMADA)
 // ==============================================================
 export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agendamento> {
   const cliente = await obterOuCriarCliente(dto.cliente);
@@ -340,9 +414,29 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
   const horarioInicioFormatado = dto.horario_inicio.substring(0, 5);
 
   if (process.env.DATABASE_URL) {
-    const client = await pool.connect();
+    let client;
     try {
+      client = await pool.connect();
       await client.query('BEGIN');
+
+      // Garante que o cliente existe no Postgres com ID válido
+      let idClientePg = cliente.id;
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cliente.id);
+      if (!isUUID) {
+        const buscaCli = await client.query(
+          'SELECT id FROM clientes WHERE telefone = $1 LIMIT 1',
+          [cliente.telefone]
+        );
+        if (buscaCli.rows[0]) {
+          idClientePg = buscaCli.rows[0].id;
+        } else {
+          const novoCliPg = await client.query(
+            'INSERT INTO clientes (nome, telefone, observacoes) VALUES ($1, $2, $3) RETURNING id',
+            [cliente.nome, cliente.telefone, cliente.observacoes || null]
+          );
+          idClientePg = novoCliPg.rows[0].id;
+        }
+      }
 
       // Validação de conflito de horário no PostgreSQL
       const checkConflict = await client.query(
@@ -369,7 +463,7 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id, to_char(data, 'YYYY-MM-DD') as data, to_char(horario_inicio, 'HH24:MI') as horario_inicio, to_char(horario_fim, 'HH24:MI') as horario_fim, duracao_total_minutos, valor_total, forma_pagamento, status, observacoes, created_at`,
         [
-          cliente.id,
+          idClientePg,
           dataFormatada,
           horarioInicioFormatado,
           horarioFim,
@@ -384,25 +478,35 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
       const agendamentoCriado = insAg.rows[0];
 
       for (const s of servicosSelecionados) {
-        await client.query(
-          `INSERT INTO agendamento_servicos (id_agendamento, id_servico, valor_cobrado, duracao_minutos)
-           VALUES ($1, $2, $3, $4)`,
-          [agendamentoCriado.id, s.id, s.valor_base, s.duracao_minutos]
-        );
+        try {
+          await client.query(
+            `INSERT INTO servicos (id, nome_servico, categoria, valor_base, duracao_minutos, ativo)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (id) DO NOTHING`,
+            [s.id, s.nome_servico, s.categoria, s.valor_base, s.duracao_minutos, true]
+          );
+          await client.query(
+            `INSERT INTO agendamento_servicos (id_agendamento, id_servico, valor_cobrado, duracao_minutos)
+             VALUES ($1, $2, $3, $4)`,
+            [agendamentoCriado.id, s.id, s.valor_base, s.duracao_minutos]
+          );
+        } catch (sErr) {
+          console.warn('Aviso: item de serviço salvo parcialmente no Postgres:', sErr);
+        }
       }
 
       await client.query('COMMIT');
 
       const retornoPg: Agendamento = {
         ...agendamentoCriado,
-        id_cliente: cliente.id,
-        cliente_id: cliente.id,
+        id_cliente: idClientePg,
+        cliente_id: idClientePg,
         cliente_nome: cliente.nome,
         cliente_telefone: cliente.telefone,
         lista_servicos: listaServicosTexto,
       };
 
-      // Espelha no arquivo local para garantir persistência contínua
+      // Espelha no armazenamento local
       const dadosLocais = carregarDadosLocais();
       const idxLocal = dadosLocais.agendamentos.findIndex((a) => a.id === retornoPg.id);
       if (idxLocal >= 0) {
@@ -414,13 +518,21 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
 
       return retornoPg;
     } catch (err: any) {
-      await client.query('ROLLBACK');
+      if (client) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rbErr) {}
+      }
       if (err.message && err.message.includes('Conflito de horário')) {
         throw err;
       }
-      console.warn('Erro ao inserir agendamento no PostgreSQL. Usando armazenamento local.', err);
+      console.warn('Erro ao inserir agendamento no PostgreSQL. Usando armazenamento local resiliente.', err);
     } finally {
-      client.release();
+      if (client) {
+        try {
+          client.release();
+        } catch (relErr) {}
+      }
     }
   }
 
@@ -477,10 +589,10 @@ export async function atualizarStatusAgendamento(
       await pool.query(
         `UPDATE agendamentos 
          SET status = $1, updated_at = CURRENT_TIMESTAMP 
-         WHERE id = $2`,
+         WHERE id::text = $2`,
         [novoStatus, id]
       );
-      const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.id = $1 ${SQL_GROUP_BY_AGENDAMENTOS} LIMIT 1`;
+      const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.id::text = $1 ${SQL_GROUP_BY_AGENDAMENTOS} LIMIT 1`;
       const res = await pool.query(sql, [id]);
       if (res && res.rows[0]) {
         resultado = res.rows[0];
@@ -490,7 +602,7 @@ export async function atualizarStatusAgendamento(
     }
   }
 
-  // Atualiza também no armazenamento persistente local
+  // Atualiza no armazenamento persistente local
   const dadosLocais = carregarDadosLocais();
   const idx = dadosLocais.agendamentos.findIndex((a) => a.id === id);
   if (idx !== -1) {
@@ -514,8 +626,8 @@ export async function excluirAgendamento(id: string): Promise<boolean> {
 
   if (process.env.DATABASE_URL) {
     try {
-      await pool.query('DELETE FROM agendamento_servicos WHERE id_agendamento = $1', [id]);
-      const res = await pool.query('DELETE FROM agendamentos WHERE id = $1 RETURNING id', [id]);
+      await pool.query('DELETE FROM agendamento_servicos WHERE id_agendamento::text = $1', [id]);
+      const res = await pool.query('DELETE FROM agendamentos WHERE id::text = $1 RETURNING id', [id]);
       excluiuPg = (res.rowCount ?? 0) > 0;
     } catch (err) {
       console.warn('Erro ao excluir agendamento no PostgreSQL. Usando armazenamento local.', err);

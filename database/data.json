@@ -1,4 +1,80 @@
 {
-  "clientes": [],
-  "agendamentos": []
+  "clientes": [
+    {
+      "id": "cli-1792532787055",
+      "nome": "Juliana Mendes",
+      "telefone": "27999887766",
+      "observacoes": "Alérgica a esmalte comum"
+    },
+    {
+      "id": "cli-1792699395985-hdfptb",
+      "nome": "Mariana Silva",
+      "telefone": "11987654321",
+      "observacoes": "Primeira vez no estúdio"
+    },
+    {
+      "id": "cli-1792699463296-xaei0j",
+      "nome": "Carla Dias",
+      "telefone": "11977778888",
+      "observacoes": "Pé tradicional"
+    },
+    {
+      "id": "cli-1792699784842-g1fvi9",
+      "nome": "Beatriz Vasconcelos",
+      "telefone": "11999887766",
+      "observacoes": "Unha de gel formato amendoado"
+    }
+  ],
+  "agendamentos": [
+    {
+      "id": "ag-1792699396002-xmhl9o",
+      "id_cliente": "cli-1792699395985-hdfptb",
+      "cliente_id": "cli-1792699395985-hdfptb",
+      "cliente_nome": "Mariana Silva",
+      "cliente_telefone": "11987654321",
+      "data": "2026-10-25",
+      "horario_inicio": "14:00",
+      "horario_fim": "16:00",
+      "duracao_total_minutos": 120,
+      "valor_total": 45,
+      "forma_pagamento": "PIX",
+      "status": "Pendente",
+      "lista_servicos": "Pé e Mão",
+      "created_at": "2026-10-22T20:03:16.002Z"
+    },
+    {
+      "id": "ag-1792699463323-fykwzo",
+      "id_cliente": "cli-1792699463296-xaei0j",
+      "cliente_id": "cli-1792699463296-xaei0j",
+      "cliente_nome": "Carla Dias",
+      "cliente_telefone": "11977778888",
+      "data": "2026-10-26",
+      "horario_inicio": "10:00",
+      "horario_fim": "11:00",
+      "duracao_total_minutos": 60,
+      "valor_total": 35,
+      "forma_pagamento": "A combinar",
+      "status": "Pendente",
+      "observacoes": "Pé tradicional",
+      "lista_servicos": "Pé",
+      "created_at": "2026-10-22T20:04:23.323Z"
+    },
+    {
+      "id": "ag-1792699784867-dufve5",
+      "id_cliente": "cli-1792699784842-g1fvi9",
+      "cliente_id": "cli-1792699784842-g1fvi9",
+      "cliente_nome": "Beatriz Vasconcelos",
+      "cliente_telefone": "11999887766",
+      "data": "2026-10-28",
+      "horario_inicio": "15:00",
+      "horario_fim": "18:30",
+      "duracao_total_minutos": 210,
+      "valor_total": 120,
+      "forma_pagamento": "PIX",
+      "status": "Confirmado",
+      "observacoes": "Unha de gel formato amendoado",
+      "lista_servicos": "Unha de Gel",
+      "created_at": "2026-10-22T20:09:44.867Z"
+    }
+  ]
 }

@@ -13,6 +13,9 @@ interface HeaderResumoProps {
   posicaoFilaAtual?: { indice: number; total: number } | null;
   onRecarregar?: () => void;
   carregando?: boolean;
+  somHabilitado?: boolean;
+  onToggleSom?: () => void;
+  onTestarSom?: () => void;
 }
 
 export const HeaderResumo: React.FC<HeaderResumoProps> = ({
@@ -23,6 +26,9 @@ export const HeaderResumo: React.FC<HeaderResumoProps> = ({
   posicaoFilaAtual = null,
   onRecarregar,
   carregando = false,
+  somHabilitado = true,
+  onToggleSom,
+  onTestarSom,
 }) => {
   const confirmados = agendamentos.filter((a) => a.status === 'Confirmado');
   
@@ -149,6 +155,34 @@ export const HeaderResumo: React.FC<HeaderResumoProps> = ({
             >
               <RotateCw size={15} style={{ animation: carregando ? 'spin 1s linear infinite' : 'none' }} />
               <span>{carregando ? 'Atualizando...' : 'Atualizar'}</span>
+            </button>
+          )}
+
+          {/* Controle de Notificações Sonoras */}
+          {onToggleSom && (
+            <button
+              onClick={onToggleSom}
+              title={
+                somHabilitado
+                  ? 'Notificações sonoras ATIVAS. Clique para silenciar.'
+                  : 'Notificações sonoras SILENCIADAS. Clique para ativar.'
+              }
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                backgroundColor: somHabilitado ? 'rgba(236, 72, 153, 0.1)' : 'var(--bg-main)',
+                color: somHabilitado ? 'var(--primary)' : 'var(--text-muted)',
+                border: somHabilitado ? '1.5px solid var(--primary)' : '1.5px solid var(--border-color)',
+                padding: '11px 14px',
+                borderRadius: 'var(--radius-md)',
+                fontWeight: 600,
+                fontSize: '0.875rem',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <span>{somHabilitado ? '🔔 Som Ativo' : '🔕 Mudo'}</span>
             </button>
           )}
 

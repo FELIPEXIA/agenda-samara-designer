@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Agendamento, StatusAgendamento } from '@/types';
 import { HeaderResumo } from '@/components/dashboard/HeaderResumo';
 import { DateNavigator } from '@/components/dashboard/DateNavigator';
 import { TimelineDiaria } from '@/components/dashboard/TimelineDiaria';
 import { ModalNovoAgendamento } from '@/components/agendamento/ModalNovoAgendamento';
+import { NotificationToast } from '@/components/NotificationToast';
+import { notificacoes } from '@/lib/notifications';
 import { obterDataHojeLocal } from '@/lib/formatters';
 
 export default function DashboardPage() {
@@ -20,6 +22,25 @@ export default function DashboardPage() {
   const [agendamentosPendentes, setAgendamentosPendentes] = useState<Agendamento[]>([]);
   const [indiceFilaPendente, setIndiceFilaPendente] = useState<number>(-1);
   const [agendamentoDestacadoId, setAgendamentoDestacadoId] = useState<string | null>(null);
+
+  // Sistema de Notificações e Som
+  const [toastAgendamento, setToastAgendamento] = useState<Agendamento | null>(null);
+  const [somHabilitado, setSomHabilitado] = useState<boolean>(() => notificacoes.isSomHabilitado());
+  const idsConhecidosRef = useRef<Set<string>>(new Set());
+  const isPrimeiraCargaRef = useRef<boolean>(true);
+
+  // Solicita permissão de notificação nativa ao carregar
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        const handler = () => {
+          notificacoes.solicitarPermissaoNotificacoes();
+          window.removeEventListener('click', handler);
+        };
+        window.addEventListener('click', handler, { once: true });
+      }
+    }
+  }, []);
 
   // Busca os agendamentos do dia selecionado
   const carregarAgendamentos = useCallback(
@@ -58,7 +79,34 @@ export default function DashboardPage() {
       });
       const json = await res.json();
       if (json.success) {
-        setAgendamentosPendentes(json.data || []);
+        const lista: Agendamento[] = json.data || [];
+        setAgendamentosPendentes(lista);
+
+        // Detecção de novos agendamentos para tocar som e exibir notificação
+        if (!isPrimeiraCargaRef.current && idsConhecidosRef.current.size > 0) {
+          const novos = lista.filter((item) => !idsConhecidosRef.current.has(item.id));
+          if (novos.length > 0) {
+            const maisRecente = novos[novos.length - 1];
+            // Toca som suave tipo sino de estúdio
+            notificacoes.tocarSomNovoAgendamento();
+            // Exibe Toast flutuante com detalhes
+            setToastAgendamento(maisRecente);
+            // Dispara notificação nativa do sistema / desktop
+            notificacoes.enviarNotificacaoNavegador(
+              '🎉 Novo Agendamento Recebido!',
+              `${maisRecente.cliente_nome} solicitou ${maisRecente.lista_servicos || 'atendimento'}.`,
+              () => {
+                const alvoData = (maisRecente.data || '').substring(0, 10);
+                if (alvoData) setDataSelecionada(alvoData);
+                setAgendamentoDestacadoId(maisRecente.id);
+              }
+            );
+          }
+        }
+
+        // Atualiza a lista de IDs conhecidos
+        idsConhecidosRef.current = new Set(lista.map((item) => item.id));
+        isPrimeiraCargaRef.current = false;
       }
     } catch (error) {
       console.error('Erro ao carregar agendamentos pendentes:', error);
@@ -71,13 +119,17 @@ export default function DashboardPage() {
     carregarPendentes();
   }, [carregarAgendamentos, carregarPendentes]);
 
-  // Sincronização entre abas sob demanda de eventos explícitos (sem polling contínuo)
+  // Sincronização entre abas via BroadcastChannel (mesma janela)
   useEffect(() => {
     if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return;
 
     const channel = new BroadcastChannel('agenda_samara_sync_channel');
     channel.onmessage = (event) => {
       if (event.data?.type === 'NOVO_AGENDAMENTO') {
+        notificacoes.tocarSomNovoAgendamento();
+        carregarPendentes();
+        carregarAgendamentos(true);
+      } else if (event.data?.type === 'STATUS_ALTERADO' || event.data?.type === 'EXCLUIDO') {
         carregarPendentes();
         carregarAgendamentos(true);
       }
@@ -86,6 +138,31 @@ export default function DashboardPage() {
     return () => {
       channel.close();
     };
+  }, [carregarAgendamentos, carregarPendentes]);
+
+  // Sincronização entre abas via localStorage storage event (funciona cross-tab)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'agenda_samara_sync') {
+        carregarPendentes();
+        carregarAgendamentos(true);
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [carregarAgendamentos, carregarPendentes]);
+
+  // Polling automático a cada 10 segundos para detecção em tempo real mesmo em outros dispositivos
+  useEffect(() => {
+    const intervalo = setInterval(() => {
+      carregarPendentes();
+      carregarAgendamentos(true);
+    }, 10000);
+
+    return () => clearInterval(intervalo);
   }, [carregarAgendamentos, carregarPendentes]);
 
   // Navegação da Fila FIFO ao clicar no Card de Pendentes
@@ -247,6 +324,17 @@ export default function DashboardPage() {
           carregarPendentes();
         }}
         carregando={carregando}
+        somHabilitado={somHabilitado}
+        onToggleSom={() => {
+          const novoEstado = notificacoes.toggleSom();
+          setSomHabilitado(novoEstado);
+          if (novoEstado) {
+            notificacoes.tocarSomNovoAgendamento();
+          }
+        }}
+        onTestarSom={() => {
+          notificacoes.tocarSomNovoAgendamento();
+        }}
       />
 
       {/* Navegador de Data */}
@@ -275,6 +363,30 @@ export default function DashboardPage() {
         onAgendamentoCriado={() => {
           carregarAgendamentos();
           carregarPendentes();
+        }}
+      />
+
+      {/* Toast Flutuante de Alerta em Tempo Real */}
+      <NotificationToast
+        agendamento={toastAgendamento}
+        onFechar={() => setToastAgendamento(null)}
+        somHabilitado={somHabilitado}
+        onToggleSom={() => {
+          const novoEstado = notificacoes.toggleSom();
+          setSomHabilitado(novoEstado);
+        }}
+        onTestarSom={() => notificacoes.tocarSomNovoAgendamento()}
+        onVerDetalhes={(agendamento) => {
+          setToastAgendamento(null);
+          const alvoData = (agendamento.data || '').substring(0, 10);
+          if (alvoData && alvoData !== dataSelecionada) {
+            setDataSelecionada(alvoData);
+          }
+          setAgendamentoDestacadoId(agendamento.id);
+          setTimeout(() => {
+            const el = document.getElementById(`card-agendamento-${agendamento.id}`);
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 300);
         }}
       />
     </main>

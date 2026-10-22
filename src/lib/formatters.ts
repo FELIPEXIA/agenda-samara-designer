@@ -93,3 +93,15 @@ export function obterDataHojeLocal(): string {
   return `${ano}-${mes}-${dia}`;
 }
 
+/**
+ * Formata um horário HH:MM ou string ISO para formato HH:MM limpo
+ */
+export function formatarHorario(horario: string): string {
+  if (!horario) return '';
+  if (horario.includes('T')) {
+    const partes = horario.split('T')[1];
+    return partes ? partes.substring(0, 5) : horario;
+  }
+  return horario.substring(0, 5);
+}
+

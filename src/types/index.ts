@@ -31,6 +31,7 @@ export interface AgendamentoServicoItem {
 export interface Agendamento {
   id: string;
   id_cliente: string;
+  cliente_id?: string;
   cliente_nome: string;
   cliente_telefone: string;
   data: string; // YYYY-MM-DD

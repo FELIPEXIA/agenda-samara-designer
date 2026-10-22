@@ -13,10 +13,11 @@ const NO_CACHE_HEADERS = {
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
-    const { id } = params;
+    const resolvedParams = await Promise.resolve(context.params);
+    const { id } = resolvedParams;
     const agendamento = await obterAgendamentoPorId(id);
 
     if (!agendamento) {
@@ -38,10 +39,11 @@ export async function GET(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
-    const { id } = params;
+    const resolvedParams = await Promise.resolve(context.params);
+    const { id } = resolvedParams;
     const body = await req.json();
     const novoStatus: StatusAgendamento = body.status;
 
@@ -73,10 +75,11 @@ export async function PATCH(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> | { id: string } }
 ) {
   try {
-    const { id } = params;
+    const resolvedParams = await Promise.resolve(context.params);
+    const { id } = resolvedParams;
     const deletado = await excluirAgendamento(id);
 
     if (!deletado) {

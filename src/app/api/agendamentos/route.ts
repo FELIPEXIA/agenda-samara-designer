@@ -43,30 +43,94 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body: CriarAgendamentoDTO = await req.json();
+    const raw: any = await req.json();
 
-    if (!body.cliente?.nome || !body.cliente?.telefone) {
+    // Normalização flexível de payload (suporta tanto objeto 'cliente' aninhado quanto campos planos)
+    const clienteNome = (
+      raw.cliente?.nome ||
+      raw.cliente_nome ||
+      raw.nome_cliente ||
+      raw.nome ||
+      raw.clientName ||
+      ''
+    ).trim();
+
+    const clienteTelefone = (
+      raw.cliente?.telefone ||
+      raw.cliente_telefone ||
+      raw.telefone_cliente ||
+      raw.telefone ||
+      raw.phone ||
+      ''
+    ).trim();
+
+    const clienteObs = (
+      raw.cliente?.observacoes ||
+      raw.cliente_observacoes ||
+      raw.observacoes ||
+      ''
+    ).trim();
+
+    if (!clienteNome || !clienteTelefone) {
       return NextResponse.json(
-        { success: false, error: 'Dados da cliente são obrigatórios' },
+        { success: false, error: 'Nome e telefone da cliente são obrigatórios' },
         { status: 400 }
       );
     }
 
-    if (!body.data || !body.horario_inicio) {
+    // Normalização de data e horário
+    let data = (raw.data || raw.date || '').trim();
+    let horarioInicio = (raw.horario_inicio || raw.horario || raw.time || '').trim();
+
+    if ((!data || !horarioInicio) && raw.data_hora) {
+      const dt = new Date(raw.data_hora);
+      if (!isNaN(dt.getTime())) {
+        if (!data) data = dt.toISOString().split('T')[0];
+        if (!horarioInicio) horarioInicio = dt.toISOString().split('T')[1].substring(0, 5);
+      }
+    }
+
+    if (!data || !horarioInicio) {
       return NextResponse.json(
         { success: false, error: 'Data e horário de início são obrigatórios' },
         { status: 400 }
       );
     }
 
-    if (!body.servicos_ids || body.servicos_ids.length === 0) {
+    // Normalização de serviços (aceita servicos_ids, servico_id único ou lista de objetos)
+    let servicosIds: string[] = [];
+    if (Array.isArray(raw.servicos_ids) && raw.servicos_ids.length > 0) {
+      servicosIds = raw.servicos_ids.filter(Boolean);
+    } else if (raw.servico_id) {
+      servicosIds = [raw.servico_id];
+    } else if (raw.serviceId) {
+      servicosIds = [raw.serviceId];
+    } else if (Array.isArray(raw.services) && raw.services.length > 0) {
+      servicosIds = raw.services.map((s: any) => (typeof s === 'string' ? s : s?.id)).filter(Boolean);
+    }
+
+    if (servicosIds.length === 0) {
       return NextResponse.json(
         { success: false, error: 'Selecione ao menos um serviço' },
         { status: 400 }
       );
     }
 
-    const novoAgendamento = await criarAgendamento(body);
+    const payload: CriarAgendamentoDTO = {
+      cliente: {
+        nome: clienteNome,
+        telefone: clienteTelefone,
+        observacoes: clienteObs,
+      },
+      data,
+      horario_inicio: horarioInicio,
+      servicos_ids: servicosIds,
+      forma_pagamento: raw.forma_pagamento || raw.payment_method || 'A combinar',
+      status: raw.status || 'Pendente',
+      observacoes: clienteObs,
+    };
+
+    const novoAgendamento = await criarAgendamento(payload);
     return NextResponse.json({ success: true, data: novoAgendamento }, { status: 201 });
   } catch (error: any) {
     console.error('Erro ao criar agendamento:', error);

@@ -6,14 +6,18 @@ import { Agendamento, Cliente, Servico, CriarAgendamentoDTO, StatusAgendamento }
 import { calcularHorarioFim, haConflitoDeHorario } from './time-calc';
 
 // Configuração do pool de conexões PostgreSQL com timeout resiliente
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')
-    ? { rejectUnauthorized: false }
-    : false,
-  connectionTimeoutMillis: 4000,
-  idleTimeoutMillis: 10000,
-});
+let pool: Pool | null = null;
+
+if (process.env.DATABASE_URL) {
+  pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_URL && !process.env.DATABASE_URL.includes('localhost')
+      ? { rejectUnauthorized: false }
+      : false,
+    connectionTimeoutMillis: 4000,
+    idleTimeoutMillis: 10000,
+  });
+}
 
 // ==============================================================
 // CATÁLOGO OFICIAL DE SERVIÇOS (SAMARA DESIGNER)
@@ -71,9 +75,10 @@ interface StorageShape {
   agendamentos: Agendamento[];
 }
 
-// Memória persistente global da instância do Node.js
+// Memória persistente global da instância do Node.js (sobrevive a hot-reload)
 const globalObj = globalThis as unknown as {
   __agendaSamaraStore?: StorageShape;
+  __agendaSamaraInitialized?: boolean;
 };
 
 if (!globalObj.__agendaSamaraStore) {
@@ -85,19 +90,51 @@ if (!globalObj.__agendaSamaraStore) {
 
 const memoryStore = globalObj.__agendaSamaraStore;
 
+/**
+ * Lê dados de um arquivo JSON de forma segura.
+ */
+function lerArquivoSeguro(caminho: string): StorageShape | null {
+  try {
+    if (fs.existsSync(caminho)) {
+      const conteudo = fs.readFileSync(caminho, 'utf-8');
+      if (conteudo && conteudo.trim().length > 2) {
+        const parsed = JSON.parse(conteudo);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            clientes: Array.isArray(parsed.clientes) ? parsed.clientes : [],
+            agendamentos: Array.isArray(parsed.agendamentos) ? parsed.agendamentos : [],
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[db] Aviso ao ler ${caminho}:`, err);
+  }
+  return null;
+}
+
+/**
+ * Mescla dados lidos do disco na memória sem duplicar.
+ */
 function mesclarNaMemoria(clientes: Cliente[], agendamentos: Agendamento[]) {
   if (Array.isArray(clientes)) {
     for (const c of clientes) {
-      if (!memoryStore.clientes.some((x) => x.id === c.id || (x.telefone && x.telefone === c.telefone))) {
+      if (!c.id) continue;
+      const jaExiste = memoryStore.clientes.some(
+        (x) => x.id === c.id || (x.telefone && x.telefone === c.telefone)
+      );
+      if (!jaExiste) {
         memoryStore.clientes.push(c);
       }
     }
   }
   if (Array.isArray(agendamentos)) {
     for (const a of agendamentos) {
+      if (!a.id) continue;
       const idx = memoryStore.agendamentos.findIndex((x) => x.id === a.id);
       if (idx >= 0) {
-        memoryStore.agendamentos[idx] = a;
+        // Atualiza com dados mais recentes
+        memoryStore.agendamentos[idx] = { ...memoryStore.agendamentos[idx], ...a };
       } else {
         memoryStore.agendamentos.push(a);
       }
@@ -105,31 +142,21 @@ function mesclarNaMemoria(clientes: Cliente[], agendamentos: Agendamento[]) {
   }
 }
 
+/**
+ * Carrega dados de TODAS as fontes (disco + tmp) e mescla na memória.
+ * Retorna uma cópia instantânea (snapshot) dos dados consolidados.
+ */
 function carregarDadosLocais(): StorageShape {
   // 1. Tenta ler de database/data.json do projeto
-  try {
-    if (fs.existsSync(DATA_FILE)) {
-      const conteudo = fs.readFileSync(DATA_FILE, 'utf-8');
-      if (conteudo && conteudo.trim()) {
-        const parsed = JSON.parse(conteudo);
-        mesclarNaMemoria(parsed.clientes || [], parsed.agendamentos || []);
-      }
-    }
-  } catch (err) {
-    // Ignora se não for legível
+  const dadosDisco = lerArquivoSeguro(DATA_FILE);
+  if (dadosDisco) {
+    mesclarNaMemoria(dadosDisco.clientes, dadosDisco.agendamentos);
   }
 
   // 2. Tenta ler de TMP_FILE (útil em ambientes serverless como Vercel)
-  try {
-    if (fs.existsSync(TMP_FILE)) {
-      const conteudoTmp = fs.readFileSync(TMP_FILE, 'utf-8');
-      if (conteudoTmp && conteudoTmp.trim()) {
-        const parsedTmp = JSON.parse(conteudoTmp);
-        mesclarNaMemoria(parsedTmp.clientes || [], parsedTmp.agendamentos || []);
-      }
-    }
-  } catch (err) {
-    // Ignora
+  const dadosTmp = lerArquivoSeguro(TMP_FILE);
+  if (dadosTmp) {
+    mesclarNaMemoria(dadosTmp.clientes, dadosTmp.agendamentos);
   }
 
   return {
@@ -138,43 +165,57 @@ function carregarDadosLocais(): StorageShape {
   };
 }
 
-function salvarDadosLocais(clientes: Cliente[], agendamentos: Agendamento[], permiteEsvaziar = false): void {
-  // 1. Proteção de integridade: nunca esvaziar o arquivo database/data.json acidentalmente
-  if (agendamentos.length === 0 && !permiteEsvaziar) {
-    const existentes = carregarDadosLocais();
-    if (existentes.agendamentos.length > 0) {
-      console.warn('Proteção de integridade: preservando agendamentos existentes em disco contra sobreposição vazia.');
-      agendamentos = existentes.agendamentos;
+/**
+ * Grava dados de forma atômica com escrita em arquivo temporário + rename.
+ */
+function gravarArquivoAtomico(caminho: string, conteudo: string): boolean {
+  try {
+    const dir = path.dirname(caminho);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    // Escreve em arquivo temporário primeiro, depois renomeia (atômico)
+    const tmpPath = caminho + '.tmp';
+    fs.writeFileSync(tmpPath, conteudo, 'utf-8');
+    fs.renameSync(tmpPath, caminho);
+    return true;
+  } catch (err) {
+    // Se rename falhar (pode acontecer em Windows), tenta escrita direta
+    try {
+      fs.writeFileSync(caminho, conteudo, 'utf-8');
+      return true;
+    } catch (err2) {
+      console.warn(`[db] Falha ao gravar ${caminho}:`, err2);
+      return false;
     }
   }
+}
 
-  // 2. Atualiza a memória em primeiro lugar
+/**
+ * Persiste os dados em memória + disco + tmp de forma resiliente.
+ */
+function salvarDadosLocais(clientes: Cliente[], agendamentos: Agendamento[]): void {
+  // 1. Atualiza a memória em primeiro lugar (sempre funciona)
   memoryStore.clientes = clientes;
   memoryStore.agendamentos = agendamentos;
 
   const jsonStr = JSON.stringify({ clientes, agendamentos }, null, 2);
 
-  // 3. Grava no arquivo do projeto (database/data.json)
-  try {
-    const dir = path.dirname(DATA_FILE);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(DATA_FILE, jsonStr, 'utf-8');
-  } catch (err) {
-    // Pode falhar em ambiente serverless com sistema de arquivos somente leitura (Vercel)
-  }
+  // 2. Grava no arquivo do projeto (database/data.json)
+  gravarArquivoAtomico(DATA_FILE, jsonStr);
 
-  // 4. Grava também no TMP como fallback garantido para ambientes serverless
-  try {
-    fs.writeFileSync(TMP_FILE, jsonStr, 'utf-8');
-  } catch (err) {
-    // Ignora
-  }
+  // 3. Grava também no TMP como fallback garantido para ambientes serverless
+  gravarArquivoAtomico(TMP_FILE, jsonStr);
+
+  console.log(`[db] Dados salvos: ${clientes.length} clientes, ${agendamentos.length} agendamentos`);
 }
 
-// Inicializa a carga dos dados
-carregarDadosLocais();
+// Inicializa a carga dos dados apenas uma vez por instância global
+if (!globalObj.__agendaSamaraInitialized) {
+  carregarDadosLocais();
+  globalObj.__agendaSamaraInitialized = true;
+  console.log(`[db] Store inicializado: ${memoryStore.clientes.length} clientes, ${memoryStore.agendamentos.length} agendamentos`);
+}
 
 // ==============================================================
 // CONSULTA SQL ROBUSTA E COMPATÍVEL
@@ -210,7 +251,7 @@ const SQL_GROUP_BY_AGENDAMENTOS = `
 // SERVIÇOS
 // ==============================================================
 export async function listarServicos(): Promise<Servico[]> {
-  if (process.env.DATABASE_URL) {
+  if (pool) {
     try {
       const res = await pool.query('SELECT * FROM servicos WHERE ativo = true ORDER BY categoria, nome_servico');
       if (res.rows && res.rows.length > 0) {
@@ -232,7 +273,7 @@ export async function listarServicos(): Promise<Servico[]> {
         return resPosSeed.rows;
       }
     } catch (err) {
-      console.warn('Erro ao consultar/popular PostgreSQL para serviços. Usando catálogo local.', err);
+      console.warn('[db] Erro ao consultar/popular PostgreSQL para serviços. Usando catálogo local.', err);
     }
   }
   return catalogoServicos.filter((s) => s.ativo);
@@ -242,7 +283,7 @@ export async function listarServicos(): Promise<Servico[]> {
 // CLIENTES
 // ==============================================================
 export async function buscarClientes(termo?: string): Promise<Cliente[]> {
-  if (process.env.DATABASE_URL) {
+  if (pool) {
     try {
       if (termo && termo.trim()) {
         const query = `
@@ -256,7 +297,7 @@ export async function buscarClientes(termo?: string): Promise<Cliente[]> {
       const res = await pool.query('SELECT id, nome, telefone, observacoes FROM clientes ORDER BY nome LIMIT 20');
       if (res.rows) return res.rows;
     } catch (err) {
-      console.warn('Erro ao consultar clientes no PostgreSQL. Usando armazenamento local.', err);
+      console.warn('[db] Erro ao consultar clientes no PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
@@ -276,7 +317,7 @@ export async function obterOuCriarCliente(dados: {
 }): Promise<Cliente> {
   const telefoneSanitizado = dados.telefone.trim();
 
-  if (process.env.DATABASE_URL) {
+  if (pool) {
     try {
       // Procura por ID se for UUID válido
       if (dados.id && dados.id.length >= 32) {
@@ -303,7 +344,7 @@ export async function obterOuCriarCliente(dados: {
         return ins.rows[0];
       }
     } catch (err) {
-      console.warn('Erro ao obter/criar cliente no PostgreSQL. Usando armazenamento local.', err);
+      console.warn('[db] Erro ao obter/criar cliente no PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
@@ -316,13 +357,14 @@ export async function obterOuCriarCliente(dados: {
   if (existentePorTelefone) return existentePorTelefone;
 
   const novoCliente: Cliente = {
-    id: `cli-${Date.now()}`,
+    id: `cli-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
     nome: dados.nome.trim(),
     telefone: telefoneSanitizado,
     observacoes: dados.observacoes?.trim(),
   };
   dadosLocais.clientes.push(novoCliente);
   salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos);
+  console.log(`[db] Novo cliente criado localmente: ${novoCliente.nome} (${novoCliente.id})`);
   return novoCliente;
 }
 
@@ -332,19 +374,21 @@ export async function obterOuCriarCliente(dados: {
 export async function listarAgendamentosPorData(data: string): Promise<Agendamento[]> {
   const dataAlvo = data.substring(0, 10);
 
-  if (process.env.DATABASE_URL) {
+  if (pool) {
     try {
       const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE to_char(a.data, 'YYYY-MM-DD') = $1 ${SQL_GROUP_BY_AGENDAMENTOS} ORDER BY a.horario_inicio ASC`;
       const res = await pool.query(sql, [dataAlvo]);
-      if (res && res.rows && res.rows.length > 0) {
+      if (res && res.rows) {
+        // Retorna mesmo que seja array vazio — o PostgreSQL é a fonte de verdade quando disponível
         return res.rows;
       }
     } catch (err) {
-      console.warn('Erro ao listar agendamentos do PostgreSQL. Usando armazenamento local.', err);
+      console.warn('[db] Erro ao listar agendamentos do PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
-  // Retorna todos os agendamentos reais persistidos na data selecionada
+  // Fallback: retorna todos os agendamentos reais persistidos na data selecionada
+  // Recarrega do disco para pegar novos agendamentos feitos por outra aba/request
   const { agendamentos } = carregarDadosLocais();
   return agendamentos
     .filter((a) => (a.data ? a.data.substring(0, 10) === dataAlvo : false))
@@ -355,15 +399,15 @@ export async function listarAgendamentosPorData(data: string): Promise<Agendamen
 // AGENDAMENTOS: LISTAR PENDENTES (FILA GERAL FIFO)
 // ==============================================================
 export async function listarAgendamentosPendentes(): Promise<Agendamento[]> {
-  if (process.env.DATABASE_URL) {
+  if (pool) {
     try {
       const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.status = 'Pendente' ${SQL_GROUP_BY_AGENDAMENTOS} ORDER BY a.created_at ASC, a.data ASC, a.horario_inicio ASC`;
       const res = await pool.query(sql);
-      if (res && res.rows && res.rows.length > 0) {
+      if (res && res.rows) {
         return res.rows;
       }
     } catch (err) {
-      console.warn('Erro ao listar agendamentos pendentes do PostgreSQL. Usando armazenamento local.', err);
+      console.warn('[db] Erro ao listar agendamentos pendentes do PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
@@ -385,7 +429,7 @@ export async function listarAgendamentosPendentes(): Promise<Agendamento[]> {
 // AGENDAMENTOS: CONSULTAR POR ID
 // ==============================================================
 export async function obterAgendamentoPorId(id: string): Promise<Agendamento | null> {
-  if (process.env.DATABASE_URL) {
+  if (pool) {
     try {
       const sql = `${SQL_SELECT_AGENDAMENTOS} WHERE a.id::text = $1 ${SQL_GROUP_BY_AGENDAMENTOS} LIMIT 1`;
       const res = await pool.query(sql, [id]);
@@ -393,7 +437,7 @@ export async function obterAgendamentoPorId(id: string): Promise<Agendamento | n
         return res.rows[0];
       }
     } catch (err) {
-      console.warn('Erro ao consultar agendamento por ID no PostgreSQL. Usando armazenamento local.', err);
+      console.warn('[db] Erro ao consultar agendamento por ID no PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
@@ -411,7 +455,7 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
   const servicosSelecionados = todosServicos.filter((s) => dto.servicos_ids.includes(s.id));
 
   const duracaoTotal = servicosSelecionados.reduce((acc, curr) => acc + curr.duracao_minutos, 0);
-  const valorTotal = servicosSelecionados.reduce((acc, curr) => acc + curr.valor_base, 0);
+  const valorTotal = servicosSelecionados.reduce((acc, curr) => acc + Number(curr.valor_base), 0);
 
   if (servicosSelecionados.length === 0 || duracaoTotal <= 0) {
     throw new Error('Nenhum serviço válido foi selecionado para o agendamento.');
@@ -422,7 +466,7 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
   const dataFormatada = dto.data.substring(0, 10);
   const horarioInicioFormatado = dto.horario_inicio.substring(0, 5);
 
-  if (process.env.DATABASE_URL) {
+  if (pool) {
     let client;
     try {
       client = await pool.connect();
@@ -500,7 +544,7 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
             [agendamentoCriado.id, s.id, s.valor_base, s.duracao_minutos]
           );
         } catch (sErr) {
-          console.warn('Aviso: item de serviço salvo parcialmente no Postgres:', sErr);
+          console.warn('[db] Aviso: item de serviço salvo parcialmente no Postgres:', sErr);
         }
       }
 
@@ -535,7 +579,7 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
       if (err.message && err.message.includes('Conflito de horário')) {
         throw err;
       }
-      console.warn('Erro ao inserir agendamento no PostgreSQL. Usando armazenamento local resiliente.', err);
+      console.warn('[db] Erro ao inserir agendamento no PostgreSQL. Usando armazenamento local resiliente.', err);
     } finally {
       if (client) {
         try {
@@ -546,6 +590,8 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
   }
 
   // Fallback em armazenamento local com validação estrita de sobreposição
+  // IMPORTANTE: Recarrega dados do disco antes de validar para pegar agendamentos
+  // de outras abas/requests que possam ter sido salvos por lá
   const dadosLocais = carregarDadosLocais();
   const conflitoMemoria = dadosLocais.agendamentos.find(
     (a) =>
@@ -563,8 +609,9 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
   }
 
   const novoAgendamento: Agendamento = {
-    id: `ag-${Date.now()}`,
+    id: `ag-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
     id_cliente: cliente.id,
+    cliente_id: cliente.id,
     cliente_nome: cliente.nome,
     cliente_telefone: cliente.telefone,
     data: dataFormatada,
@@ -573,7 +620,7 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
     duracao_total_minutos: duracaoTotal,
     valor_total: valorTotal,
     forma_pagamento: dto.forma_pagamento,
-    status: dto.status || 'Confirmado',
+    status: (dto.status || 'Confirmado') as StatusAgendamento,
     observacoes: dto.observacoes,
     lista_servicos: listaServicosTexto,
     created_at: new Date().toISOString(),
@@ -581,6 +628,7 @@ export async function criarAgendamento(dto: CriarAgendamentoDTO): Promise<Agenda
 
   dadosLocais.agendamentos.push(novoAgendamento);
   salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos);
+  console.log(`[db] Novo agendamento criado localmente: ${novoAgendamento.id} para ${cliente.nome} em ${dataFormatada} ${horarioInicioFormatado}`);
   return novoAgendamento;
 }
 
@@ -593,7 +641,7 @@ export async function atualizarStatusAgendamento(
 ): Promise<Agendamento | null> {
   let resultado: Agendamento | null = null;
 
-  if (process.env.DATABASE_URL) {
+  if (pool) {
     try {
       await pool.query(
         `UPDATE agendamentos 
@@ -607,7 +655,7 @@ export async function atualizarStatusAgendamento(
         resultado = res.rows[0];
       }
     } catch (err) {
-      console.warn('Erro ao atualizar status no PostgreSQL. Usando armazenamento local.', err);
+      console.warn('[db] Erro ao atualizar status no PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
@@ -618,12 +666,16 @@ export async function atualizarStatusAgendamento(
     dadosLocais.agendamentos[idx].status = novoStatus;
     if (!resultado) {
       resultado = dadosLocais.agendamentos[idx];
+    } else {
+      // Sincroniza dados do PG no local
+      dadosLocais.agendamentos[idx] = { ...dadosLocais.agendamentos[idx], ...resultado };
     }
   } else if (resultado) {
     dadosLocais.agendamentos.push(resultado);
   }
 
   salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos);
+  console.log(`[db] Status do agendamento ${id} atualizado para ${novoStatus}`);
   return resultado;
 }
 
@@ -633,13 +685,13 @@ export async function atualizarStatusAgendamento(
 export async function excluirAgendamento(id: string): Promise<boolean> {
   let excluiuPg = false;
 
-  if (process.env.DATABASE_URL) {
+  if (pool) {
     try {
       await pool.query('DELETE FROM agendamento_servicos WHERE id_agendamento::text = $1', [id]);
       const res = await pool.query('DELETE FROM agendamentos WHERE id::text = $1 RETURNING id', [id]);
       excluiuPg = (res.rowCount ?? 0) > 0;
     } catch (err) {
-      console.warn('Erro ao excluir agendamento no PostgreSQL. Usando armazenamento local.', err);
+      console.warn('[db] Erro ao excluir agendamento no PostgreSQL. Usando armazenamento local.', err);
     }
   }
 
@@ -648,9 +700,10 @@ export async function excluirAgendamento(id: string): Promise<boolean> {
   let excluiuLocal = false;
   if (idx !== -1) {
     dadosLocais.agendamentos.splice(idx, 1);
-    salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos, true);
+    salvarDadosLocais(dadosLocais.clientes, dadosLocais.agendamentos);
     excluiuLocal = true;
   }
 
+  console.log(`[db] Agendamento ${id} excluído: PG=${excluiuPg}, Local=${excluiuLocal}`);
   return excluiuPg || excluiuLocal;
 }
